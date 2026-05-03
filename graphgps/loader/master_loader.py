@@ -15,6 +15,7 @@ from torch_geometric.graphgym.loader import load_pyg, load_ogb, set_dataset_attr
 from torch_geometric.graphgym.register import register_loader
 
 from graphgps.loader.dataset.aqsol_molecules import AQSOL
+from graphgps.loader.dataset.chiral3d_molecule_net import Chiral3DMoleculeNet
 from graphgps.loader.dataset.coco_superpixels import COCOSuperpixels
 from graphgps.loader.dataset.malnet_tiny import MalNetTiny
 from graphgps.loader.dataset.voc_superpixels import VOCSuperpixels
@@ -136,6 +137,9 @@ def load_dataset_master(format, name, dataset_dir):
         
         elif pyg_dataset_id == 'MoleculeNet':
             dataset = preformat_MoleculeNet(dataset_dir, name)
+        
+        elif pyg_dataset_id == 'Chiral3DMoleculeNet':
+            dataset = preformat_Chiral3DMoleculeNet(dataset_dir, name)
             
         elif pyg_dataset_id == 'QM9':
             dataset = preformat_QM9(dataset_dir, name)
@@ -243,7 +247,7 @@ def load_dataset_master(format, name, dataset_dir):
                   + f'{elapsed:.2f}'[-3:]
         logging.info(f"Done! Took {timestr}")
 
-    if cfg.model.type in ['DGTModel', 'DGTModel3D']:
+    if cfg.model.type in ['DGTModel', 'DGTModel3D', 'NodeGTModel', 'EdgeGTModel']:
         start = time.perf_counter()
         logging.info("Adding edge to edge inputs for all graphs...")
         pre_transform_in_memory(dataset,
@@ -544,6 +548,26 @@ def preformat_MoleculeNet(dataset_dir, name):
     raise ValueError(f"Unexpected name choice for MoleculeNet: {name}")
 
 
+def preformat_Chiral3DMoleculeNet(dataset_dir, name):
+    """Load and preformat Chiral3DMoleculeNet datasets.
+
+    Args:
+        dataset_dir: path where to store the cached dataset
+
+    Returns:
+        PyG dataset object
+    """
+    if name in ['BACE', 'Tox21', 'ChIRo']:
+        dataset = Chiral3DMoleculeNet(dataset_dir, name, transform=partial(typecast_x_and_edge_attr, type_str='float'))
+        if name == 'ChIRo':
+            train_graph_index = [i for i, data in enumerate(dataset) if data.split == 'train']
+            val_graph_index = [i for i, data in enumerate(dataset) if data.split == 'val']
+            test_graph_index = [i for i, data in enumerate(dataset) if data.split == 'test']
+            dataset.split_idxs = [train_graph_index, val_graph_index, test_graph_index]
+        return dataset
+    raise ValueError(f"Unexpected name choice for Chiral3DMoleculeNet: {name}")
+
+
 def preformat_QM9(dataset_dir, name):
     """Load and preformat QM9 dataset.
 
@@ -557,7 +581,7 @@ def preformat_QM9(dataset_dir, name):
     from rdkit.Chem import SDMolSupplier
     names = ['mu', 'alpha', 'homo', 'lumo', 'gap', 'r2', 'zpve', 'u0', 'u', 'h', 'g', 'cv']
     dataset = QM9(dataset_dir)
-    mols = list(SDMolSupplier(f"{dataset_dir}/raw/gdb9.sdf", sanitize=False))
+    mols = list(SDMolSupplier(f"{dataset_dir}/raw/gdb9_uff.sdf", sanitize=False))
     with open(f"{dataset_dir}/raw/uncharacterized.txt", 'r') as f:
         skip = [int(x.split()[0]) - 1 for x in f.read().split('\n')[9:-2]]
     pos = np.concatenate([mol.GetConformer().GetPositions() for i, mol in enumerate(mols) if i not in skip], axis=0)

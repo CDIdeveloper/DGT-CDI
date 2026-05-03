@@ -2,6 +2,7 @@ import torch
 from torch_geometric.utils import to_dense_adj, add_self_loops
 from torch_geometric.graphgym.register import register_edge_encoder
 from torch_scatter import scatter_sum
+from torch_geometric.graphgym.config import cfg
 
 
 def pad_batch_size(x, n_batch):
@@ -26,8 +27,8 @@ class DenseEdgeEncoder(torch.nn.Module):
 
         self.encoder = torch.nn.Embedding(num_embeddings=3, embedding_dim=emb_dim, padding_idx=0)
         self.e2e_encoder = torch.nn.Embedding(num_embeddings=3, embedding_dim=emb_dim, padding_idx=0)
-        # self.e_dense_encoder = torch.nn.Linear(emb_dim, emb_dim)
-        # self.e2e_dense_encoder = torch.nn.Linear(emb_dim, emb_dim)
+        if cfg.dataset.name == 'ChIRo':
+            self.iso_encoder = torch.nn.Embedding(num_embeddings=3, embedding_dim=emb_dim, padding_idx=0)
         # torch.nn.init.xavier_uniform_(self.encoder.weight.data)
         self.ignore_rings = ignore_rings
 
@@ -49,6 +50,9 @@ class DenseEdgeEncoder(torch.nn.Module):
             batch.e2e_edge_dense = to_dense_adj(batch.e2e_edge_index, batch=batch.e_batch, edge_attr=x[batch.e2e_node_index])
         e2e_A_dense = get_e2e_dense_edge_types(batch, ignore_rings=self.ignore_rings)
         batch.e2e_edge_dense += self.e2e_encoder(e2e_A_dense)
+        if cfg.dataset.name == 'ChIRo':
+            iso_edge_attr = to_dense_adj(batch.iso_edge_index, batch=batch.e_batch, edge_attr=batch.iso_edge_attr)
+            batch.e2e_edge_dense += self.iso_encoder(iso_edge_attr)
 
         return batch
 

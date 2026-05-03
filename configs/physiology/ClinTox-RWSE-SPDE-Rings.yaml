@@ -50,7 +50,7 @@ gt:
   n_heads: 8
   dim_hidden: 64  # `gt.dim_hidden` must match `gnn.dim_inner`
   dropout: 0.0
-  attn_dropout: 0.5
+  attn_dropout: 0.3
   layer_norm: False
   batch_norm: True
 gnn:

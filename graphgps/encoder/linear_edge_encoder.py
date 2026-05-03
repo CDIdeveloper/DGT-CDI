@@ -13,6 +13,8 @@ class LinearEdgeEncoder(torch.nn.Module):
             self.in_dim = cfg.dataset.edge_encoder_num_types
         elif cfg.dataset.format == 'PyG-QM9':
             self.in_dim = cfg.dataset.edge_encoder_num_types
+        elif cfg.dataset.format == 'PyG-Chiral3DMoleculeNet':
+            self.in_dim = cfg.dataset.edge_encoder_num_types
         elif cfg.dataset.format == 'OGB':
             self.in_dim = cfg.dataset.edge_encoder_num_types
         else:

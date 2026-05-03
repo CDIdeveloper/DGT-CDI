@@ -19,9 +19,9 @@ dataset:
   edge_encoder_num_types: 3
   edge_encoder_bn: False
   spd: True
-  spd_max_length: 8
+  spd_max_length: 6
   rings: True
-  rings_max_length: 18
+  rings_max_length: 8
   rings_coalesce_edges: False
 share:
   dim_in: 9
@@ -30,7 +30,7 @@ posenc_RWSE:
   enable: True
   enable_edges: True
   kernel:
-    times_func: range(1,17)
+    times_func: range(1,9)
   model: Linear
   dim_pe: 64
   raw_norm_type: None
@@ -61,7 +61,7 @@ gnn:
   batchnorm: True
   act: relu
   dropout: 0.0
-  agg: mean
+  agg: sum
   normalize_adj: False
 optim:
   clip_grad_norm: True

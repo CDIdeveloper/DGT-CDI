@@ -3,8 +3,9 @@ import torch.nn as nn
 import torch_geometric.graphgym.register as register
 import torch_geometric.nn as pygnn
 from torch_geometric.data import Batch
-from torch_geometric.utils import to_dense_batch, to_dense_adj
-from torch_scatter import scatter_mean, scatter_add
+from torch_geometric.utils import to_dense_adj, to_dense_batch
+from torch_scatter import scatter_add, scatter_mean, scatter_sum
+
 from graphgps.encoder.relative_pe_encoder import get_dense_indices_from_sparse
 
 
@@ -205,6 +206,162 @@ class DGTLayer(nn.Module):
         """
         x = self.ff_dropout1_n(self.activation(self.ff_linear1_n(x)))
         return self.ff_dropout2_n(self.ff_linear2_n(x))
+
+    def _e_ff_block(self, x):
+        """Feed Forward block.
+        """
+        x = self.ff_dropout1_e(self.activation(self.ff_linear1_e(x)))
+        return self.ff_dropout2_e(self.ff_linear2_e(x))
+
+    def extra_repr(self):
+        s = f'summary: dim_h={self.dim_h}, ' \
+            f'heads={self.num_heads}'
+        return s
+
+
+class NodeGTLayer(nn.Module):
+    def __init__(self, dim_h, num_heads, act='relu', 
+                 dropout=0.0, attn_dropout=0.0, layer_norm=False, batch_norm=True):
+        super().__init__()
+
+        self.dim_h = dim_h
+        self.num_heads = num_heads
+        self.attn_dropout = attn_dropout
+        self.layer_norm = layer_norm
+        self.batch_norm = batch_norm
+        self.activation = register.act_dict[act]
+
+        self.self_attn_n = MultiHeadAttentionLayer(
+            dim_h, dim_h//num_heads, num_heads, attn_dropout=self.attn_dropout)
+        self.linear_n = nn.Linear(dim_h, dim_h)
+
+        # Normalization for MPNN and Self-Attention representations.
+        if self.layer_norm:
+            self.norm1_n = pygnn.norm.GraphNorm(dim_h)
+        if self.batch_norm:
+            self.norm1_n = nn.BatchNorm1d(dim_h)
+        self.dropout_n = nn.Dropout(dropout)
+
+        # Feed Forward block.
+        self.ff_linear1_n = nn.Linear(dim_h, dim_h * 2)
+        self.ff_linear2_n = nn.Linear(dim_h * 2, dim_h)
+        if self.layer_norm:
+            self.norm2_n = pygnn.norm.GraphNorm(dim_h)
+        if self.batch_norm:
+            self.norm2_n = nn.BatchNorm1d(dim_h)
+        self.ff_dropout1_n = nn.Dropout(dropout)
+        self.ff_dropout2_n = nn.Dropout(dropout)
+
+    def forward(self, batch):
+        # Residual connection
+        h_n = batch.x
+        h_n_in = h_n
+
+        # Multi-head attention.
+        h_n_dense, _ = to_dense_batch(h_n, batch.batch)
+        h_n = self.self_attn_n(
+            h_n_dense, 
+            e_att=batch.edge_attention, 
+            e_val=batch.edge_values, 
+            attn_mask=batch.attn_mask
+        )[batch.mask]
+        h_n = self.linear_n(h_n)
+        h_n = self.dropout_n(h_n)
+        h_n = h_n + h_n_in
+        if self.layer_norm:
+            h_n = self.norm1_n(h_n, batch.batch)
+        if self.batch_norm:
+            h_n = self.norm1_n(h_n)
+        
+        # Feed forward block.
+        h_n = h_n + self._n_ff_block(h_n)
+        if self.layer_norm:
+            h_n = self.norm2_n(h_n, batch.batch)
+        if self.batch_norm:
+            h_n = self.norm2_n(h_n)
+
+        batch.x = h_n
+        return batch
+
+    def _n_ff_block(self, x):
+        """Feed Forward block.
+        """
+        x = self.ff_dropout1_n(self.activation(self.ff_linear1_n(x)))
+        return self.ff_dropout2_n(self.ff_linear2_n(x))
+
+    def extra_repr(self):
+        s = f'summary: dim_h={self.dim_h}, ' \
+            f'heads={self.num_heads}'
+        return s
+
+
+class EdgeGTLayer(nn.Module):
+    def __init__(self, dim_h, num_heads, act='relu', 
+                 dropout=0.0, attn_dropout=0.0, layer_norm=False, batch_norm=True):
+        super().__init__()
+
+        self.dim_h = dim_h
+        self.num_heads = num_heads
+        self.attn_dropout = attn_dropout
+        self.layer_norm = layer_norm
+        self.batch_norm = batch_norm
+        self.activation = register.act_dict[act]
+
+        self.self_attn_e = MultiHeadAttentionLayer(
+            dim_h, dim_h//num_heads, num_heads, attn_dropout=self.attn_dropout)
+        # self.linear_n2e = nn.Linear(2 * dim_h, dim_h)
+        self.linear_e = nn.Linear(dim_h, dim_h)
+
+        if self.layer_norm and self.batch_norm:
+            raise ValueError("Cannot apply two types of normalization together")
+
+        # Normalization for MPNN and Self-Attention representations.
+        if self.layer_norm:
+            self.norm1_e = pygnn.norm.GraphNorm(dim_h)
+        if self.batch_norm:
+            self.norm1_e = nn.BatchNorm1d(dim_h)
+        self.dropout_e = nn.Dropout(dropout)
+
+        # Feed Forward block.
+        self.ff_linear1_e = nn.Linear(dim_h, dim_h * 2)
+        self.ff_linear2_e = nn.Linear(dim_h * 2, dim_h)
+        if self.layer_norm:
+            self.norm2_e = pygnn.norm.GraphNorm(dim_h)
+        if self.batch_norm:
+            self.norm2_e = nn.BatchNorm1d(dim_h)
+        self.ff_dropout1_e = nn.Dropout(dropout)
+        self.ff_dropout2_e = nn.Dropout(dropout)
+
+    def forward(self, batch):
+        # Residual connection
+        h_e = batch.e
+        h_e_in = h_e
+
+        # Multi-head attention.
+        h_e_dense, _ = to_dense_batch(h_e, batch.e_batch, batch_size=batch.mask.size(0))
+        h_e = self.self_attn_e(
+            h_e_dense, 
+            e_att=batch.e2e_edge_attention, 
+            e_val=batch.e2e_edge_values, 
+            attn_mask=batch.e_attn_mask
+        )[batch.e_mask]
+        h_e = self.linear_e(h_e)
+        h_e = self.dropout_e(h_e)
+        h_e = h_e + h_e_in
+        if self.layer_norm:
+            h_e = self.norm1_e(h_e, batch.e_batch)
+        if self.batch_norm:
+            h_e = self.norm1_e(h_e)
+        
+        # Feed forward block.
+        h_e = h_e + self._e_ff_block(h_e)
+        if self.layer_norm:
+            h_e = self.norm2_e(h_e, batch.e_batch)
+        if self.batch_norm:
+            h_e = self.norm2_e(h_e)
+
+        batch.e = h_e
+        return batch
 
     def _e_ff_block(self, x):
         """Feed Forward block.

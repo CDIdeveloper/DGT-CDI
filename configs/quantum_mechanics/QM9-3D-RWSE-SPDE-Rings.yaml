@@ -6,7 +6,7 @@ wandb:
   project: QM9
 dataset:
   format: PyG-QM9
-  name: homo
+  name: lumo
   task: graph
   task_type: regression
   transductive: False
@@ -35,9 +35,9 @@ posenc_RWSE:
   raw_norm_type: None
 train:
   mode: custom
-  batch_size: 384
+  batch_size: 256
   eval_period: 1
-  ckpt_period: 10
+  ckpt_period: 100
 model:
   type: DGTModel3D
   loss_fun: l1

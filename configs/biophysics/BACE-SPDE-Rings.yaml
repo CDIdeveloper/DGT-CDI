@@ -15,13 +15,13 @@ dataset:
   node_encoder_bn: False
   edge_encoder: True
   edge_encoder_shared: True
-  edge_encoder_name: LinearEdge+RWSE-SPDE
+  edge_encoder_name: LinearEdge+SPDE
   edge_encoder_num_types: 3
   edge_encoder_bn: False
   spd: True
-  spd_max_length: 8
+  spd_max_length: 6
   rings: True
-  rings_max_length: 12
+  rings_max_length: 6
   rings_coalesce_edges: False
 share:
   dim_in: 9
@@ -29,7 +29,7 @@ posenc_RWSE:
   enable: True
   enable_edges: True
   kernel:
-    times_func: range(1,13)
+    times_func: range(1,7)
   model: Linear
   dim_pe: 32
   raw_norm_type: None
@@ -40,12 +40,12 @@ train:
   ckpt_period: 1
 model:
   type: DGTModel
-  loss_fun: focal_loss # alpha=0.5
+  loss_fun: cross_entropy # alpha=0.5
   edge_decoding: dot
   graph_pooling: add
 gt:
   layer_type: None+DGT
-  layers: 5
+  layers: 6
   n_heads: 8
   dim_hidden: 64  # `gt.dim_hidden` must match `gnn.dim_inner`
   dropout: 0.0

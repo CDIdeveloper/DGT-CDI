@@ -36,7 +36,7 @@ posenc_RWSE:
   raw_norm_type: None
 train:
   mode: custom
-  batch_size: 16
+  batch_size: 8
   eval_period: 1
   ckpt_period: 10
 model:
@@ -68,6 +68,6 @@ optim:
   optimizer: adamW
   weight_decay: 1e-5
   base_lr: 0.0001
-  max_epoch: 100
+  max_epoch: 50
   scheduler: cosine_with_warmup
-  num_warmup_epochs: 10
+  num_warmup_epochs: 5

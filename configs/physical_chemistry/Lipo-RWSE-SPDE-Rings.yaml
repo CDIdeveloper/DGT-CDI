@@ -16,13 +16,13 @@ dataset:
   node_encoder_bn: False
   edge_encoder: True
   edge_encoder_shared: True
-  edge_encoder_name: LinearEdge+RWSE-SPDE
+  edge_encoder_name: LinearEdge+SPDE
   edge_encoder_num_types: 3
   edge_encoder_bn: False
   spd: True
-  spd_max_length: 8
+  spd_max_length: 6
   rings: True
-  rings_max_length: 18
+  rings_max_length: 6
   rings_coalesce_edges: False
 share:
   dim_in: 9

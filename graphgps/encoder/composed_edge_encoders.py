@@ -48,7 +48,7 @@ def concat_edge_encoders(encoder_classes, pe_enc_names):
             
             # Only CSA layer uses dense edge features.
             transformer_layer = cfg.gt.layer_type.split('+')[1]
-            self.add_dense_edge_features = (transformer_layer in ['CSA', 'DGT'])
+            self.add_dense_edge_features = (transformer_layer in ['CSA', 'DGT', 'NodeGT', 'EdgeGT'])
             self.share_edge_features = cfg.dataset.edge_encoder_shared
             # Whether to add special features for bonds that are part of a ring.
             # if cfg.dataset.rings_coalesce_edges == True, 
