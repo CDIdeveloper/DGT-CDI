@@ -89,21 +89,22 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 ## Phase 1 — Dataset integration
 - Add `datasets/biodegradability/{train.csv, test.csv}`.
 - Implement `graphgps/loader/dataset/biodegradability.py` as a PyG `InMemoryDataset` (pattern: [chiral3d_molecule_net.py](../graphgps/loader/dataset/chiral3d_molecule_net.py) / [aqsol_molecules.py](../graphgps/loader/dataset/aqsol_molecules.py)).
-  - Per molecule: SMILES → RDKit `Mol` → atom/bond features (reuse OGB / MoleculeNet featurisation), `data.y` ∈ {0, 1}, `data.desc` = standardised descriptor vector.
-  - Persist a `train_mask` / `val_mask` / `test_mask` (or pre-computed split indices) reflecting the supplied split, with ~10 % of original train held out as validation.
+  - Per molecule: SMILES → RDKit `Mol` → atom/bond features (reuse OGB / MoleculeNet featurisation), `data.y` ∈ {0, 1}, `data.desc` = standardised descriptor vector stored as shape `[1, desc_dim]` (graph-level attribute, so PyG collation stacks it to `[B, desc_dim]`).
+  - Set `train_graph_index` / `val_graph_index` / `test_graph_index` on `dataset.data` — lists of indices, the graph-level split convention (`*_mask` is the node-level convention and does not apply here). These reflect the supplied train/test split, with ~10 % of the original train held out as validation.
   - Drop unparseable SMILES with a logged warning (don't silently skip).
-- Register a `PyG-Biodegradability` format in [graphgps/loader/master_loader.py](../graphgps/loader/master_loader.py) and a matching `split_mode: predefined` branch in [graphgps/loader/split_generator.py](../graphgps/loader/split_generator.py).
+- Register a `PyG-Biodegradability` format in [graphgps/loader/master_loader.py](../graphgps/loader/master_loader.py). **No change to [graphgps/loader/split_generator.py](../graphgps/loader/split_generator.py) is needed** — the existing `split_mode: standard` already consumes pre-set `*_graph_index` attributes for graph-level tasks ([split_generator.py:68-74](../graphgps/loader/split_generator.py#L68)).
 - **Verify:** loader returns 3 DataLoaders, batch shapes look right, `batch.desc` is present and finite, label distribution printed.
 
 ## Phase 2 — Descriptor plumbing (late fusion)
 - Standardise descriptors (z-score using train-set mean/std; persist stats so test/val use the same normalisation).
-- Carry descriptors through the DGT backbone untouched (they live on `batch.desc` and survive `to_dense_batch` because they're a graph-level tensor).
-- Add `DescriptorGraphHead` under [graphgps/head/](../graphgps/head/) — same as the current `line_graph` head but concatenates `batch.desc` (optionally passed through a small MLP) before the final MLP layer. Register via `head_dict`.
+- Carry descriptors through the DGT backbone untouched — `batch.desc` is a graph-level tensor `[B, desc_dim]` produced directly by PyG's mini-batch collation. It does **not** pass through `to_dense_batch` (that only applies to node-level tensors), so no backbone code needs to change.
+- Add `DescriptorGraphHead` under [graphgps/head/](../graphgps/head/) — same as the current `line_graph` head (`LineGraphHead`, [san_graph.py:57](../graphgps/head/san_graph.py#L57)) but concatenates `batch.desc` (optionally passed through a small MLP) before the final `out_layer`. Register via `register_head` (e.g. as `line_graph_with_desc`).
 - **Verify:** unit test — forward pass with a toy batch returns the right output shape; ablation switch (`gnn.head: line_graph` vs `line_graph_with_desc`) toggles cleanly.
 
 ## Phase 3 — Config & first training run
+- Register the new `dataset.desc_dim` config field in [graphgps/config/dataset_config.py](../graphgps/config/dataset_config.py) — GraphGym rejects unknown YAML keys, so the field must exist in the schema before a config can reference it.
 - Create `configs/biodegradability/Biodeg-RWSE-SPDE-Rings.yaml`, modelled on [BBBP-RWSE-SPDE-Rings.yaml](../configs/physiology/BBBP-RWSE-SPDE-Rings.yaml):
-  - `dataset.format: PyG-Biodegradability`, `task_type: classification_binary`, `split_mode: predefined`.
+  - `dataset.format: PyG-Biodegradability`, `task_type: classification_binary`, `split_mode: standard`.
   - `gnn.head: line_graph_with_desc`, set `dataset.desc_dim` to the descriptor count.
   - Hyperparameters initially mirrored from BBBP (similar size, similar task); revisit after first run.
   - Loss: `cross_entropy`. If the train set is materially imbalanced (>~70/30), switch to `weighted_cross_entropy` or `focal_loss` (both already in [graphgps/loss/](../graphgps/loss/)).
@@ -111,20 +112,33 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 - **Verify:** val ROC-AUC > random; test ROC-AUC is logged; no NaN losses; W&B run visible.
 
 ## Phase 4 — Ablation: does the descriptor channel help?
-- Train three configs (4 seeds each, same data, same split):
-  1. DGT only (`head: line_graph`).
-  2. DGT + descriptors (`head: line_graph_with_desc`).
-  3. Descriptors only (small MLP baseline) — quick sanity check for descriptor signal.
+- Train two DGT variants (4 seeds each, same data, same split), toggled purely by the `gnn.head` config key:
+  1. DGT only (`gnn.head: line_graph`).
+  2. DGT + descriptors (`gnn.head: line_graph_with_desc`).
+- Add a descriptors-only baseline — a small standalone MLP on the descriptor vector (a separate script / model, **not** a `gnn.head` toggle of `DGTModel`) — as a quick sanity check that the descriptors carry signal on their own.
 - Report mean ± std test ROC-AUC, AUPRC, accuracy at the optimal-F1 threshold.
 - **Verify:** clear ordering and confidence intervals; decide whether to keep descriptors in the default config.
 
 ## Phase 5 — Interpretation (optional, paper-aligned)
-- Implement Grad-SAM-style attention attribution (Methods §9 of the paper, [nc_paper_lean.md](paper/nc_paper_lean.md)) over the DGT attention maps.
+- Implement Grad-SAM-style attention attribution (Supplementary Information §9 "Attention-based interpretation", in `documents/paper/supp_nc_paper_lean.docx`) over the DGT attention maps.
 - Pick a handful of RD vs NRD molecules, render atom-level importance overlays, sanity-check against known biodegradability substructures (e.g., ester / amide hydrolysis sites, halogenation patterns).
 - **Verify:** importance maps are non-trivial (not all-uniform) and qualitatively reasonable.
+
+## Phase 6 — Pretraining (optional, conditional)
+
+**Gate — only undertake this if *both* hold after Phase 4:**
+1. the biodegradability dataset is small (roughly < a few thousand molecules), and
+2. the Phase 4 baseline shows a generalisation gap (over- or under-fitting) that more data could plausibly close.
+
+Note: this is **not** the paper's pretraining recipe. The paper's `### Pretraining setup` ([nc_paper_lean.md](paper/nc_paper_lean.md)) is specific to **DGT(3D)** — supervised transfer of a *quantum* property (PCQM4Mv2 HOMO–LUMO gap → QM9 HOMO/LUMO), which has no mechanistic link to a 2D biodegradability classification task.
+
+- Scope: **supervised transfer** with the 2D `DGTModel`. Pretrain on a larger MoleculeNet classification dataset (e.g. Tox21 ~8k, or HIV ~41k), then fine-tune on biodegradability.
+- Use the existing weight-transfer machinery — [graphgps/finetuning.py](../graphgps/finetuning.py) (`load_pretrained_model_cfg`, `init_model_from_pretrained`) — driven by `cfg.pretrained.dir`, `cfg.pretrained.freeze_main`, `cfg.pretrained.reset_prediction_head`. The biodegradability head is reset; the DGT backbone is initialised from the pretrained weights.
+- Atom/bond featurisation must match between the pretraining and fine-tuning datasets (same encoder, same `dim_in`) so the backbone weights are transferable.
+- **Verify:** fine-tuned-from-pretrained test ROC-AUC is compared against the from-scratch Phase 4 result over 4 seeds; keep pretraining only if it shows a clear, consistent gain.
+- Out of scope: self-supervised pretraining (masked-atom / contrastive) — not implemented in this repo, and a separate larger effort.
 
 ## Open items / assumptions to confirm later
 - Exact descriptor list and dimensionality (currently treated as a black-box vector of length `desc_dim`).
 - Class balance of the RD/NRD labels — drives the loss choice in Phase 3.
-- Whether we eventually want pretraining on a public biodegradability set (e.g. EPI BIOWIN or ECHA REACH) — not in the initial roadmap.
 
