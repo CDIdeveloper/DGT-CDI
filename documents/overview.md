@@ -78,13 +78,20 @@ Design decisions taken up front:
 - **Descriptor fusion:** late fusion at the head — `MLP([GAP(X^a) ‖ GAP(X^b) ‖ desc])`. Touches only the head, keeps the DGT backbone untouched, easy to ablate.
 - **Splits:** honour the existing train/test; carve ~10 % of train as validation for early stopping. No scaffold re-split.
 - **Data location:** `datasets/biodegradability/` — `train.csv`, `test.csv`, each with `smiles`, `label`, descriptor columns.
+- **Testing:** a [tests/](../tests/) suite in two tiers — fast unit tests covering the new loader / head / config (run by default: `pytest`), and one slow end-to-end regression test marked `e2e` (run explicitly: `pytest -m e2e`). The `e2e` test is re-run at each phase boundary to catch regressions in the core DGT pipeline. See per-phase Verify steps.
 
 The plan is phased; each phase has a verification check, matching the "Goal-Driven Execution" guideline in [CLAUDE.md](../CLAUDE.md).
 
 ## Phase 0 — Environment & sanity check
-- Build the conda env from [environment.yaml](../environment.yaml).
-- Reproduce one shipped run (e.g. BBBP) end-to-end to confirm the codebase trains and logs cleanly.
-- **Verify:** training loss decreases, ROC-AUC matches the paper's BBBP ballpark.
+- [X] Build the env from [environment.yaml](../environment.yaml) (`mamba env create -f environment.yaml`, `conda activate dgt`), then verify imports and CUDA:
+  `python -c "import torch, torch_geometric, torch_scatter, graph_tool, rdkit; print(torch.cuda.is_available())"` must print `True`.
+- [X] The device hardcode at [main.py:156](../main.py#L156) (`cfg.device = 'cuda:0'`) is correct on a CUDA box — no patch needed.
+- [ ] apply the LD_PRELOAD activation script, 
+- [ ] **Smoke test** — confirm the pipeline runs without crashing (BBBP auto-downloads via PyG; the first run also caches the `rings` / `SPD` / `line_graph` / `RWSE` pre-transforms):
+  `python main.py --cfg configs/physiology/BBBP-RWSE-SPDE-Rings.yaml --repeat 1 seed 0 wandb.use False optim.max_epoch 3`
+- **Full reproduction** — `python main.py --cfg configs/physiology/BBBP-RWSE-SPDE-Rings.yaml --repeat 4 seed 0 wandb.use False`. Per-seed output lands in `results/DGT/BBBP-RWSE-SPDE-Rings/<seed>/{train,val,test}/stats.json` (one JSON line per epoch); `agg_runs()` writes a mean ± std summary under `agg/`. The best epoch is chosen by validation AUC (`metric_best: auc`).
+- Add the end-to-end regression test [tests/test_e2e_bbbp.py](../tests/test_e2e_bbbp.py) and register the `e2e` marker in [pytest.ini](../pytest.ini). It runs a **reduced BBBP run (2 seeds × 30 epochs)** via subprocess and asserts: exit code 0; 30 epochs of stats per split; no NaN losses; best val ROC-AUC > 0.62 (a conservative floor — 30 epochs is deliberately under-trained); per-seed results dirs populated. Marked `e2e`, so the default `pytest` skips it; run with `pytest -m e2e`.
+- **Verify:** smoke test exits 0; the full run converges (train loss ↓, val AUC ↑) with final aggregated test ROC-AUC in the paper's BBBP ballpark (Supplementary §6.1 / main results table); `pytest -m e2e` passes.
 
 ## Phase 1 — Dataset integration
 - Add `datasets/biodegradability/{train.csv, test.csv}`.
@@ -93,13 +100,15 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
   - Set `train_graph_index` / `val_graph_index` / `test_graph_index` on `dataset.data` — lists of indices, the graph-level split convention (`*_mask` is the node-level convention and does not apply here). These reflect the supplied train/test split, with ~10 % of the original train held out as validation.
   - Drop unparseable SMILES with a logged warning (don't silently skip).
 - Register a `PyG-Biodegradability` format in [graphgps/loader/master_loader.py](../graphgps/loader/master_loader.py). **No change to [graphgps/loader/split_generator.py](../graphgps/loader/split_generator.py) is needed** — the existing `split_mode: standard` already consumes pre-set `*_graph_index` attributes for graph-level tasks ([split_generator.py:68-74](../graphgps/loader/split_generator.py#L68)).
-- **Verify:** loader returns 3 DataLoaders, batch shapes look right, `batch.desc` is present and finite, label distribution printed.
+- Add `tests/test_biodegradability_dataset.py` — a tiny CSV fixture exercised through the loader: checks atom/bond feature dims, `y ∈ {0, 1}`, `desc` shape `[1, desc_dim]`, the three `*_graph_index` lists are set and disjoint, and that an unparseable SMILES is dropped.
+- **Verify:** `pytest tests/test_biodegradability_dataset.py` passes; the loader returns 3 DataLoaders; `batch.desc` is present and finite; label distribution printed; `pytest -m e2e` still green.
 
 ## Phase 2 — Descriptor plumbing (late fusion)
 - Standardise descriptors (z-score using train-set mean/std; persist stats so test/val use the same normalisation).
 - Carry descriptors through the DGT backbone untouched — `batch.desc` is a graph-level tensor `[B, desc_dim]` produced directly by PyG's mini-batch collation. It does **not** pass through `to_dense_batch` (that only applies to node-level tensors), so no backbone code needs to change.
 - Add `DescriptorGraphHead` under [graphgps/head/](../graphgps/head/) — same as the current `line_graph` head (`LineGraphHead`, [san_graph.py:57](../graphgps/head/san_graph.py#L57)) but concatenates `batch.desc` (optionally passed through a small MLP) before the final `out_layer`. Register via `register_head` (e.g. as `line_graph_with_desc`).
-- **Verify:** unit test — forward pass with a toy batch returns the right output shape; ablation switch (`gnn.head: line_graph` vs `line_graph_with_desc`) toggles cleanly.
+- Add `tests/test_descriptor_head.py` — instantiate `DescriptorGraphHead`, run a forward pass on a toy batch, assert output shape `[B, C]`; assert both `line_graph` and `line_graph_with_desc` instantiate.
+- **Verify:** `pytest tests/test_descriptor_head.py` passes; the ablation switch (`gnn.head: line_graph` vs `line_graph_with_desc`) toggles cleanly; `pytest -m e2e` still green.
 
 ## Phase 3 — Config & first training run
 - Register the new `dataset.desc_dim` config field in [graphgps/config/dataset_config.py](../graphgps/config/dataset_config.py) — GraphGym rejects unknown YAML keys, so the field must exist in the schema before a config can reference it.
@@ -108,8 +117,9 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
   - `gnn.head: line_graph_with_desc`, set `dataset.desc_dim` to the descriptor count.
   - Hyperparameters initially mirrored from BBBP (similar size, similar task); revisit after first run.
   - Loss: `cross_entropy`. If the train set is materially imbalanced (>~70/30), switch to `weighted_cross_entropy` or `focal_loss` (both already in [graphgps/loss/](../graphgps/loss/)).
+- Add `tests/test_config.py` — assert the new `Biodeg-RWSE-SPDE-Rings.yaml` loads without error and that `dataset.desc_dim` is a recognised config key.
 - Run `python main.py --cfg configs/biodegradability/Biodeg-RWSE-SPDE-Rings.yaml --repeat 4 seed 0`.
-- **Verify:** val ROC-AUC > random; test ROC-AUC is logged; no NaN losses; W&B run visible.
+- **Verify:** `pytest tests/test_config.py` passes; val ROC-AUC > random; test ROC-AUC is logged; no NaN losses; W&B run visible; `pytest -m e2e` still green.
 
 ## Phase 4 — Ablation: does the descriptor channel help?
 - Train two DGT variants (4 seeds each, same data, same split), toggled purely by the `gnn.head` config key:

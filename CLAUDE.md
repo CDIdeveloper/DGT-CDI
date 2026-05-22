@@ -76,7 +76,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Do NOT run commands that make network requests to AWS services
 - Do NOT execute code outside the scope of current conversation
 - Do NOT write imports inside functions, methods, or classes - always place imports at the top of the file
-- Always briefly highlight main changes and ask for approval before making changes.
+- Always briefly highlight main changes and ask for approval before making changes. (especially for git commands)
 - Do not use imports inside functions, all imports must be at the top of the file.
 - Do not right functions inside a function or methods of a class, unless this function will be used in this function or method specifically.
 - Never run pip or conda command
