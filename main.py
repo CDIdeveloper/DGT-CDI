@@ -207,4 +207,7 @@ if __name__ == '__main__':
     # When being launched in batch mode, mark a yaml as done
     if args.mark_done:
         os.rename(args.cfg_file, f'{args.cfg_file}_done')
+    elapsed = time.perf_counter() - overall_start
+    logging.info(f"[*] Total time across all seeds: "
+                 f"{elapsed:.1f}s ({elapsed/3600:.2f}h)")
     logging.info(f"[*] All done: {datetime.datetime.now()}")
