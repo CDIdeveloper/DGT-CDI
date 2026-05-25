@@ -34,3 +34,7 @@ dependencies:
       - wandb==0.18.7
       - rdkit==2025.9.1
       - libauc==1.1.0
+
+      # Post-hoc analysis (scripts/analyze_run.py)
+      - matplotlib==3.8.4
+      - scikit-learn==1.4.2

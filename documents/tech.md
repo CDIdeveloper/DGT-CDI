@@ -45,6 +45,65 @@ Selection is wired through YAML: e.g. [configs/physiology/BBBP-RWSE-SPDE-Rings.y
 
 **Bottom line.** GraphGPS supplies the *harness* — GraphGym registry, training loop, config system, encoder/loss/loader infrastructure — and DGT reuses it. For the **model itself** (layer, network, head, key transforms) DGT does *not* extend the upstream GPSLayer; it registers a parallel `DGTLayer` / `DGTModel` / `line_graph` head that the DGT YAML configs select instead. The original `GPSLayer` / `GPSModel` files remain in the repo as siblings.
 
+### Registry pattern: how components get wired in
+
+[main.py](../main.py) never imports DGT components by name — it dispatches everything through GraphGym's **global registry dicts**. Every new layer / network / head / loss / loader / train mode added to the repo plugs in through the same chain.
+
+**The dispatch in main.py** ([main.py:198](../main.py#L198)):
+
+```python
+train_dict[cfg.train.mode](loggers, loaders, model, optimizer, scheduler)
+```
+
+`train_dict` is a dict imported from `torch_geometric.graphgym.register` ([main.py:23](../main.py#L23)). `cfg.train.mode` is a string from the YAML (`custom`, `inference-only`, `dgt`, …). The same pattern applies to `network_dict[cfg.model.type]`, `head_dict[cfg.gnn.head]`, `node_encoder_dict[cfg.dataset.node_encoder_name]`, etc.
+
+**How a string ends up in those dicts** (using the `dgt` train mode as the example):
+
+```
+main.py:6    import graphgps
+   └──▶ graphgps/__init__.py
+          ├── from .act import *
+          ├── ...
+          ├── from .train import *      ← line 12
+          └── ...
+              └──▶ graphgps/train/__init__.py
+                     #  Builds __all__ = ['custom_train', 'example', 'dgt_train']
+                     #  by globbing every *.py in this directory.
+                     │
+                     │  `from .train import *` then imports each
+                     │  submodule listed in __all__ — Python's
+                     │  standard auto-import-all-submodules trick.
+                     │
+                     └──▶ graphgps/train/dgt_train.py
+                            #  At import time the decorator runs:
+                            @register_train('dgt')
+                            def dgt_train(...): ...
+                            #  ⇒  train_dict['dgt'] = dgt_train
+```
+
+Step by step: `import graphgps` → `from .train import *` → glob-built `__all__` → each `.py` imported as a submodule → its `@register_train(...)` / `@register_layer(...)` / `@register_head(...)` / etc. decorator runs at import time → entry added to the global registry dict. Later, `main.py` (or `create_model`, `create_loader`, …) resolves the YAML string against the dict.
+
+The same `glob → __all__ → wildcard import` pattern is repeated in every `graphgps/<subfolder>/__init__.py` ([graphgps/train/__init__.py](../graphgps/train/__init__.py), [graphgps/layer/__init__.py](../graphgps/layer/__init__.py), [graphgps/network/__init__.py](../graphgps/network/__init__.py), …). It's why new files in those subfolders register automatically without any `__init__.py` edit.
+
+**Two consequences worth internalising:**
+
+- **Drop-in.** A new `.py` added under `graphgps/{train,layer,network,head,loss,encoder,loader/dataset,transform}/` is auto-imported. As long as it carries a `@register_*` decorator, it's wired into the harness with **zero changes** to `main.py` or any package-level `__init__.py`.
+- **`main.py` is purely a dispatcher.** Every layer / network / head / train mode is selected through YAML strings. Swapping the upstream `GPSLayer` for `DGTLayer`, or `train.mode: custom` for `train.mode: dgt`, is a one-line YAML change.
+
+**Quick verification** — confirm a new entry is registered without launching a training run:
+
+```bash
+python -c "
+import graphgps  # triggers the registration chain
+from torch_geometric.graphgym.register import train_dict
+print(sorted(train_dict.keys()))
+"
+# Expected after dgt_train.py was added:
+# ['custom', 'dgt', 'inference-only', 'standard']
+```
+
+If a name is missing, the most likely cause is an import-time error in the submodule itself — `python -c "import graphgps.train.dgt_train"` will surface the traceback.
+
 ## Model architecture
 - **Dual Graph Transformer layers** ([graphgps/layer/dgt_layer.py](../graphgps/layer/dgt_layer.py)): biased multi-head Q/K/V attention with pairwise features acting as **both** an attention bias ($E^{\text{att}}$) and a value modulator ($E^{\text{val}}$):
 

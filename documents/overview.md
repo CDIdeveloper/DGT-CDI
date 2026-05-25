@@ -95,9 +95,28 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
   Then `mamba deactivate && mamba activate dgt` to load the hook; verify with `echo $LD_PRELOAD` (should print `$CONDA_PREFIX/lib/libgomp.so.1`). The single quotes in the `echo`s are deliberate — they keep `$CONDA_PREFIX` literal in the script files so it expands at *activation* time, not when you run the `echo`.
 - [X] **Smoke test** — confirm the pipeline runs without crashing (BBBP auto-downloads via PyG; the first run also caches the `rings` / `SPD` / `line_graph` / `RWSE` pre-transforms):
   `python main.py --cfg configs/physiology/BBBP-RWSE-SPDE-Rings.yaml --repeat 1 seed 0 wandb.use False optim.max_epoch 3`
-- **Full reproduction** — `python main.py --cfg configs/physiology/BBBP-RWSE-SPDE-Rings.yaml --repeat 4 seed 0 wandb.use False`. Per-seed output lands in `results/DGT/BBBP-RWSE-SPDE-Rings/<seed>/{train,val,test}/stats.json` (one JSON line per epoch); `agg_runs()` writes a mean ± std summary under `agg/`. The best epoch is chosen by validation AUC (`metric_best: auc`).
-- Add the end-to-end regression test [tests/test_e2e_bbbp.py](../tests/test_e2e_bbbp.py) and register the `e2e` marker in [pytest.ini](../pytest.ini). It runs a **reduced BBBP run (2 seeds × 30 epochs)** via subprocess and asserts: exit code 0; 30 epochs of stats per split; no NaN losses; best val ROC-AUC > 0.62 (a conservative floor — 30 epochs is deliberately under-trained); per-seed results dirs populated. Marked `e2e`, so the default `pytest` skips it; run with `pytest -m e2e`.
-- **Verify:** smoke test exits 0; the full run converges (train loss ↓, val AUC ↑) with final aggregated test ROC-AUC in the paper's BBBP ballpark (Supplementary §6.1 / main results table); `pytest -m e2e` passes.
+- [ ] **Full reproduction with the DGT pipeline** — runs the canonical routine: train + val each epoch, test held out and run **once** on the best-val checkpoint, per-sample test predictions dumped for post-hoc analysis. Uses [BBBP-DGT-Pipeline.yaml](../configs/physiology/BBBP-DGT-Pipeline.yaml) (parallel alternative to the upstream config) and [graphgps/train/dgt_train.py](../graphgps/train/dgt_train.py) (`train.mode: dgt`).
+  ```bash
+  python main.py \
+    --cfg configs/physiology/BBBP-DGT-Pipeline.yaml \
+    --repeat 4 seed 0 wandb.use False
+  ```
+  Per-seed output lands in `results/DGT/BBBP-DGT-Pipeline/<seed>/`:
+  - `train/stats.json`, `val/stats.json` — one JSON line per epoch.
+  - `test/stats.json` — **one line only**, at the best-val epoch.
+  - `test/predictions.pt` — per-sample `(y_true, y_pred)` for analysis.
+  - `ckpt/<best_epoch>.ckpt` — single best-val checkpoint (`ckpt_best: True`, `ckpt_clean: True` enforced by the dgt train mode).
+  - `agg/` — `agg_runs()` aggregates mean ± std across seeds at the end of `main.py`.
+- [ ] **Post-hoc analysis** — turn `predictions.pt` into plots (ROC, PR, confusion matrix @ optimal-F1, score histogram) using [scripts/analyze_run.py](../scripts/analyze_run.py). Run once per seed:
+  ```bash
+  for s in 0 1 2 3; do
+    python scripts/analyze_run.py results/DGT/BBBP-DGT-Pipeline/$s
+  done
+  ```
+  Outputs land under `<run_dir>/plots/` with a `summary.json` for the scalar metrics + best epoch.
+- [ ] **Record the chosen model** in [trained_models.md](trained_models.md) — date, config path, git SHA, chosen seed, best-val + test metrics, checkpoint path. See [modeling_routine.md](modeling_routine.md) for the full step-by-step.
+- Add the end-to-end regression test [tests/test_e2e_bbbp.py](../tests/test_e2e_bbbp.py) and register the `e2e` marker in [pytest.ini](../pytest.ini). It runs a **reduced BBBP run (2 seeds × 30 epochs)** via subprocess on the **original** [BBBP-RWSE-SPDE-Rings.yaml](../configs/physiology/BBBP-RWSE-SPDE-Rings.yaml) (i.e. the upstream `custom` train mode — so the gate keeps testing the core DGT pipeline, not just the new wrapper). Asserts: exit code 0; 30 epochs of stats per split; no NaN losses; best val ROC-AUC > 0.62 (a conservative floor — 30 epochs is deliberately under-trained); per-seed results dirs populated. Marked `e2e`, so the default `pytest` skips it; run with `pytest -m e2e`.
+- **Verify:** smoke test exits 0; the full run converges (train loss ↓, val AUC ↑) with final aggregated test ROC-AUC in the paper's BBBP ballpark (Supplementary §6.1 / main results table); analysis script produces non-empty `plots/` + `summary.json` for each seed; `pytest -m e2e` passes.
 
 ## Phase 1 — Dataset integration
 - Add `datasets/biodegradability/{train.csv, test.csv}`.
@@ -128,11 +147,20 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 - **Verify:** `pytest tests/test_config.py` passes; val ROC-AUC > random; test ROC-AUC is logged; no NaN losses; W&B run visible; `pytest -m e2e` still green.
 
 ## Phase 4 — Ablation: does the descriptor channel help?
-- Train two DGT variants (4 seeds each, same data, same split), toggled purely by the `gnn.head` config key:
+- Train two DGT variants (4 seeds each, same data, same split, both with `train.mode: dgt`), toggled purely by the `gnn.head` config key:
   1. DGT only (`gnn.head: line_graph`).
   2. DGT + descriptors (`gnn.head: line_graph_with_desc`).
 - Add a descriptors-only baseline — a small standalone MLP on the descriptor vector (a separate script / model, **not** a `gnn.head` toggle of `DGTModel`) — as a quick sanity check that the descriptors carry signal on their own.
-- Report mean ± std test ROC-AUC, AUPRC, accuracy at the optimal-F1 threshold.
+- For every variant × seed, run [scripts/analyze_run.py](../scripts/analyze_run.py) to generate ROC / PR / confusion-matrix plots + a `summary.json` with the scalar metrics:
+  ```bash
+  for cfg in Biodeg-DGT-Pipeline Biodeg-DGT-Pipeline-WithDesc; do
+    for s in 0 1 2 3; do
+      python scripts/analyze_run.py results/DGT/$cfg/$s
+    done
+  done
+  ```
+- Aggregate the per-seed `summary.json` files into a comparison table (mean ± std of test ROC-AUC, AUPRC, accuracy at the optimal-F1 threshold) — this is the ablation report.
+- Record the winning model in [trained_models.md](trained_models.md).
 - **Verify:** clear ordering and confidence intervals; decide whether to keep descriptors in the default config.
 
 ## Phase 5 — Interpretation (optional, paper-aligned)
