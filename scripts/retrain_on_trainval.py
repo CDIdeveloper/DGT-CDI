@@ -1,0 +1,192 @@
+"""Retrain on train+val combined — automatic median-seed selection.
+
+Usage:
+    python scripts/retrain_on_trainval.py <run_dir>
+
+`<run_dir>` is the parent results directory of a finished `train.mode: dgt`
+run, e.g. `results/DGT/BBBP-DGT-Pipeline/`.
+
+What this script does:
+  1. Reads each seed's `<seed>/test/stats.json` and identifies the seed whose
+     test metric (cfg.metric_best) is closest to the median across seeds —
+     i.e. neither best (cherry-pick) nor worst.
+  2. Reads that seed's best-val epoch from `<seed>/test/predictions.pt`.
+  3. Subprocesses `main.py` with overrides — `seed=<chosen>`,
+     `optim.max_epoch=<best_epoch+1>`, `train.mode=dgt_retrain` — to retrain
+     on **train + val combined** for `best_epoch + 1` epochs.
+  4. Copies the produced checkpoint to `<run_dir>/final_model.ckpt` and writes
+     a manifest `<run_dir>/final_model.json` summarising the choices.
+
+The test set is NOT touched at any point. The retrained model is for
+downstream deployment; use the original dgt-mode aggregated mean ± std as
+the reported generalisation estimate.
+"""
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import torch
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read_jsonl(path):
+    with open(path) as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
+def _find_seed_dirs(run_dir: Path):
+    """Return per-seed subdirs sorted by seed number."""
+    seeds = sorted(
+        [d for d in run_dir.iterdir() if d.is_dir() and d.name.isdigit()],
+        key=lambda d: int(d.name),
+    )
+    if not seeds:
+        raise RuntimeError(
+            f"No per-seed subdirs (integer-named) found under {run_dir}."
+        )
+    return seeds
+
+
+def _pick_median_seed(run_dir: Path, metric: str):
+    """Return (chosen_seed_name, chosen_metric, per_seed_dict, median)."""
+    seed_dirs = _find_seed_dirs(run_dir)
+    per_seed = {}
+    for d in seed_dirs:
+        stats_path = d / 'test' / 'stats.json'
+        if not stats_path.is_file():
+            raise FileNotFoundError(
+                f"Missing {stats_path}. The original run must have used "
+                "train.mode: dgt and completed successfully."
+            )
+        stats = _read_jsonl(stats_path)
+        if len(stats) != 1:
+            raise RuntimeError(
+                f"Expected 1 line in {stats_path} (dgt mode writes one final "
+                f"test record), got {len(stats)}. The original run may have "
+                "used train.mode: custom instead of dgt."
+            )
+        if metric not in stats[0]:
+            raise KeyError(
+                f"Metric '{metric}' not found in {stats_path} (available "
+                f"keys: {list(stats[0].keys())})."
+            )
+        per_seed[d.name] = float(stats[0][metric])
+
+    values = sorted(per_seed.values())
+    n = len(values)
+    median = values[n // 2] if n % 2 \
+        else 0.5 * (values[n // 2 - 1] + values[n // 2])
+    chosen = min(per_seed, key=lambda s: abs(per_seed[s] - median))
+    return chosen, per_seed[chosen], per_seed, median
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Retrain on train+val combined using the median-test "
+                    "seed's hyperparameters and best-val epoch."
+    )
+    parser.add_argument(
+        "run_dir", type=Path,
+        help="Parent results directory of a finished `train.mode: dgt` run "
+             "(e.g. results/DGT/BBBP-DGT-Pipeline/).",
+    )
+    args = parser.parse_args()
+
+    run_dir: Path = args.run_dir.resolve()
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"Not a directory: {run_dir}")
+
+    cfg_path = run_dir / "config.yaml"
+    if not cfg_path.is_file():
+        raise FileNotFoundError(f"Missing {cfg_path}")
+    with open(cfg_path) as fh:
+        cfg = yaml.safe_load(fh)
+    metric_best = cfg.get('metric_best', 'auc')
+
+    # 1. Pick the median seed.
+    chosen, chosen_metric, per_seed, median = _pick_median_seed(
+        run_dir, metric_best
+    )
+    print(f"Per-seed test {metric_best}: {per_seed}")
+    print(f"Median {metric_best}: {median:.4f}")
+    print(f"Chosen seed: {chosen} (test {metric_best}={chosen_metric:.4f}, "
+          f"closest to median).")
+
+    # 2. Read best_epoch from that seed's predictions.pt.
+    pred_path = run_dir / chosen / 'test' / 'predictions.pt'
+    if not pred_path.is_file():
+        raise FileNotFoundError(f"Missing {pred_path}")
+    pred = torch.load(pred_path, map_location='cpu', weights_only=False)
+    if 'best_epoch' not in pred:
+        raise KeyError(
+            f"'best_epoch' not in {pred_path}. The original run must have "
+            "completed under train.mode: dgt."
+        )
+    best_epoch = int(pred['best_epoch'])
+    retrain_epochs = best_epoch + 1
+    print(f"Median seed's best_epoch={best_epoch}; will retrain for "
+          f"{retrain_epochs} epochs on train+val combined.")
+
+    # 3. Subprocess main.py with overrides.
+    final_out_dir = run_dir / 'final'
+    cmd = [
+        sys.executable, "main.py",
+        "--cfg", str(cfg_path),
+        "--repeat", "1",
+        "seed", str(int(chosen)),
+        "optim.max_epoch", str(retrain_epochs),
+        "train.mode", "dgt_retrain",
+        "out_dir", str(final_out_dir),
+        "wandb.use", "False",
+    ]
+    print(f"Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=REPO_ROOT)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+    # 4. Identify and copy the final ckpt to a stable filename.
+    config_name = cfg_path.stem
+    final_run_dir = final_out_dir / config_name / str(int(chosen))
+    ckpts = sorted((final_run_dir / 'ckpt').glob('*.ckpt'))
+    if not ckpts:
+        print(f"Warning: no ckpt produced under {final_run_dir / 'ckpt'}.")
+        sys.exit(1)
+    src_ckpt = ckpts[-1]
+    dst_ckpt = run_dir / 'final_model.ckpt'
+    shutil.copy2(src_ckpt, dst_ckpt)
+
+    # 5. Write a tiny manifest for downstream consumers.
+    manifest = {
+        'source_run': str(run_dir),
+        'config': str(cfg_path),
+        'config_name': config_name,
+        'metric_best': metric_best,
+        'per_seed_test_metric': per_seed,
+        'median_test_metric': median,
+        'chosen_seed': int(chosen),
+        'chosen_seed_test_metric': chosen_metric,
+        'best_epoch_on_original_val_split': best_epoch,
+        'retrain_epochs': retrain_epochs,
+        'final_run_dir': str(final_run_dir),
+        'final_ckpt': str(src_ckpt),
+        'final_model_copy': str(dst_ckpt),
+        'note': 'Trained on train+val combined; test set was held out.',
+    }
+    manifest_path = run_dir / 'final_model.json'
+    with open(manifest_path, 'w') as fh:
+        json.dump(manifest, fh, indent=2)
+
+    print()
+    print("DONE.")
+    print(f"  Final ckpt:        {src_ckpt}")
+    print(f"  Convenience copy:  {dst_ckpt}")
+    print(f"  Manifest:          {manifest_path}")
+
+
+if __name__ == '__main__':
+    main()

@@ -156,7 +156,27 @@ done
 
 Inspect the four numbers, identify the median (for `--repeat 4` that's the average of the two middle values), and pick the seed whose AUC is closest to it. Its checkpoint at `results/DGT/BBBP-DGT-Pipeline/<seed>/ckpt/<best_epoch>.ckpt` is the model to keep / deploy / share — record that path in [trained_models.md](trained_models.md) in the next step.
 
-**Optional alternative — retrain on `train + val` combined** with the chosen hyperparameters and seed. This uses more data and produces a single deterministic model. Worth the extra run only if you have a definite deployment target and want every example squeezed for training; for most reporting / handoff purposes the median-seed checkpoint is sufficient.
+**Optional alternative — retrain on `train + val` combined** for deployment. After picking the median seed from the per-seed runs, you can fold val into the training set and retrain on `train + val` for the median seed's best-val epoch. The result is a single deterministic model trained on more data, suitable for deployment / serving / predicting on new molecules.
+
+**The test set is NOT used** at any point in this retrain — it stays held out. The retrained model has no held-out test estimate of its own; the original dgt-mode aggregated mean ± std remains the reported generalisation estimate.
+
+One-line invocation (auto median-seed selection + auto best-epoch lookup):
+
+```bash
+python scripts/retrain_on_trainval.py results/DGT/BBBP-DGT-Pipeline/
+```
+
+The script:
+1. Reads each seed's `<seed>/test/stats.json`, identifies the seed whose test metric is closest to the median across seeds.
+2. Reads that seed's `best_epoch` from `<seed>/test/predictions.pt`.
+3. Subprocesses `main.py` with `train.mode: dgt_retrain` (a parallel alternative to `dgt`), `seed=<chosen>`, `optim.max_epoch=<best_epoch+1>`. The `dgt_retrain` mode at [graphgps/train/dgt_retrain.py](../graphgps/train/dgt_retrain.py) combines `train + val` into a single loader, trains for the given budget, and saves one checkpoint.
+
+Outputs:
+- `<run_dir>/final/<config_name>/<chosen_seed>/ckpt/<final_epoch>.ckpt` — the retrained model (where main.py writes it).
+- `<run_dir>/final_model.ckpt` — convenience copy at the run root for easy reference.
+- `<run_dir>/final_model.json` — manifest: per-seed test metrics, median, chosen seed, `best_epoch`, retrain budget, paths.
+
+Worth the extra run only if you have a definite deployment target. For reporting / handoff, the median-seed checkpoint from the original dgt run is sufficient — the retrain is purely an optional "use all the labels for the final model" step.
 
 ### Step 6 — Document the best model in [trained_models.md](trained_models.md)
 
