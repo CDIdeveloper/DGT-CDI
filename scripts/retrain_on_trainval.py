@@ -14,12 +14,17 @@ What this script does:
   3. Subprocesses `main.py` with overrides — `seed=<chosen>`,
      `optim.max_epoch=<best_epoch+1>`, `train.mode=dgt_retrain` — to retrain
      on **train + val combined** for `best_epoch + 1` epochs.
-  4. Copies the produced checkpoint to `<run_dir>/final_model.ckpt` and writes
-     a manifest `<run_dir>/final_model.json` summarising the choices.
+  4. Writes the **deployment bundle** to `<run_dir>/`:
+       - `final_model{,_with_test}.ckpt`         — the retrained checkpoint
+       - `final_model{,_with_test}.config.yaml`  — pristine YAML (yacs-reloadable)
+       - `final_model{,_with_test}.json`         — manifest (seed metrics,
+                                                   best_epoch, best_f1_threshold)
+     These three files together are everything `scripts/predict.py` needs to
+     run inference on a different server.
 
-The test set is NOT touched at any point. The retrained model is for
-downstream deployment; use the original dgt-mode aggregated mean ± std as
-the reported generalisation estimate.
+The test set is NOT touched at any point (in the default mode). The retrained
+model is for downstream deployment; use the original dgt-mode aggregated
+mean ± std as the reported generalisation estimate.
 """
 import argparse
 import json
@@ -218,6 +223,30 @@ def main():
     dst_ckpt = run_dir / f'final_model{suffix}.ckpt'
     shutil.copy2(src_ckpt, dst_ckpt)
 
+    # 4a. Bundle the pristine config next to the ckpt so the trio
+    # (ckpt + config + manifest) is a self-contained deployment artifact.
+    dst_cfg = run_dir / f'final_model{suffix}.config.yaml'
+    shutil.copy2(orig_cfg_path, dst_cfg)
+
+    # 4b. If the chosen seed already has plots/summary.json (i.e. the user ran
+    # analyze_run.py), pull `best_f1_threshold` so predict.py can use the
+    # 'optimal-f1' threshold without needing the seed's plots/ folder shipped
+    # alongside.
+    chosen_summary = run_dir / chosen / 'plots' / 'summary.json'
+    best_f1_threshold = None
+    if chosen_summary.is_file():
+        try:
+            with open(chosen_summary) as fh:
+                best_f1_threshold = json.load(fh).get('best_f1_threshold')
+        except Exception as e:
+            print(f"Warning: could not read 'best_f1_threshold' from "
+                  f"{chosen_summary}: {e}")
+    else:
+        print(f"Note: {chosen_summary} not found; skipping "
+              "'best_f1_threshold' in manifest. Run scripts/analyze_run.py "
+              f"on results/.../{chosen}/ before retraining if you want "
+              "predict.py --threshold optimal-f1 to work.")
+
     # 5. Write a tiny manifest for downstream consumers.
     manifest = {
         'source_run': str(run_dir),
@@ -230,12 +259,14 @@ def main():
         'chosen_seed': int(chosen),
         'chosen_seed_test_metric': chosen_metric,
         'best_epoch_on_original_val_split': best_epoch,
+        'best_f1_threshold': best_f1_threshold,
         'retrain_epochs': retrain_epochs,
         'train_mode': train_mode,
         'included_test_in_training': bool(args.include_test),
         'final_run_dir': str(final_run_dir),
         'final_ckpt': str(src_ckpt),
         'final_model_copy': str(dst_ckpt),
+        'final_model_config': str(dst_cfg),
         'note': (
             'Trained on train+val+TEST combined; no held-out data remains.'
             if args.include_test else
@@ -250,6 +281,7 @@ def main():
     print("DONE.")
     print(f"  Final ckpt:        {src_ckpt}")
     print(f"  Convenience copy:  {dst_ckpt}")
+    print(f"  Bundled config:    {dst_cfg}")
     print(f"  Manifest:          {manifest_path}")
 
 

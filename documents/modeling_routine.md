@@ -4,7 +4,7 @@ Practical notes for running the DGT training pipeline day-to-day. For the concep
 
 This doc covers five things:
 1. [Where each thing already lives](#where-each-thing-already-lives) — file/location reference for testing, metrics, checkpoints, predictions, plots.
-2. [Step-by-step procedure](#step-by-step-procedure) — env setup → training+val → testing → analysis → recording the best model.
+2. [Step-by-step procedure](#step-by-step-procedure) — env setup → training+val → testing → analysis → recording the best model → predicting on new data.
 3. [Hyperparameter exploration](#hyperparameter-exploration) — which knobs matter most, with typical sweep ranges.
 4. [Recommended workflow](#recommended-workflow-cleanup-between-runs) — what to clean between runs and why (situation-based + by parameter category).
 5. (External) [trained_models.md](trained_models.md) — registry where the best model from each run is documented.
@@ -25,6 +25,8 @@ Default path conventions when running `python main.py --cfg <cfg> ...`. Substitu
 | Model checkpoint | Yes (when `train.enable_ckpt: True`) | `results/DGT/<config_name>/<seed>/ckpt/<epoch>.ckpt`. With `ckpt_best: True` + `ckpt_clean: True` (defaults for `train.mode: dgt`) only the **best-val** checkpoint is retained. |
 | **Per-sample test predictions** (raw `y_true`, `y_pred_score`) | Only with `train.mode: dgt` | `results/DGT/<config_name>/<seed>/test/predictions.pt` |
 | **Plots** (ROC, PR, confusion matrix, scatter, residuals) | Generated post-hoc | `results/DGT/<config_name>/<seed>/plots/*.png` (run `scripts/analyze_run.py`) |
+| **Deployment bundle** (ckpt + config + manifest) | Written by `scripts/retrain_on_trainval.py` | `results/DGT/<config_name>/final_model{,_with_test}.{ckpt,config.yaml,json}` |
+| **Predictions on new SMILES** | Run `scripts/predict.py` | output CSV at the path you pass via `--output-csv` |
 | W&B live metrics (opt-in) | Yes (if `wandb.use: True`) | the W&B dashboard for the configured project |
 
 **Two important nuances:**
@@ -156,6 +158,8 @@ done
 
 Inspect the four numbers, identify the median (for `--repeat 4` that's the average of the two middle values), and pick the seed whose AUC is closest to it. Its checkpoint at `results/DGT/BBBP-DGT-Pipeline/<seed>/ckpt/<best_epoch>.ckpt` is the model to keep / deploy / share — record that path in [trained_models.md](trained_models.md) in the next step.
 
+> **Deploying a manually-picked seed.** If you skip the retrain step and just want to deploy the chosen seed's `.ckpt` to another server, also copy the **pristine** YAML from `configs/` next to it — e.g. `cp configs/physiology/BBBP-DGT-Pipeline.yaml <deploy_dir>/`. The dumped `results/DGT/<config_name>/config.yaml` is **not** reloadable (yacs rejects its runtime-set keys). `scripts/predict.py` then needs `--orig-config <deploy_dir>/BBBP-DGT-Pipeline.yaml` since the auto-discovery convention only finds bundles named `<ckpt_stem>.config.yaml`.
+
 **Optional alternative — retrain for deployment.** After picking the median seed from the per-seed runs, you can fold val into the training set and retrain on more data for the median seed's best-val epoch. The result is a single deterministic model trained on more data, suitable for deployment / serving / predicting on new molecules.
 
 #### Two senses of "test data is used"
@@ -198,8 +202,11 @@ python scripts/retrain_on_trainval.py results/DGT/BBBP-DGT-Pipeline/ --include-t
 
 Outputs:
 - `<run_dir>/final{,_with_test}/<config_name>/<chosen_seed>/ckpt/<final_epoch>.ckpt` — the retrained model (where main.py writes it).
-- `<run_dir>/final_model{,_with_test}.ckpt` — convenience copy at the run root for easy reference.
-- `<run_dir>/final_model{,_with_test}.json` — manifest: per-seed test metrics, median, chosen seed, `best_epoch`, retrain budget, `train_mode`, `included_test_in_training: bool`, paths.
+- `<run_dir>/final_model{,_with_test}.ckpt` — convenience copy at the run root.
+- `<run_dir>/final_model{,_with_test}.config.yaml` — copy of the **pristine** YAML config (yacs-reloadable on another server).
+- `<run_dir>/final_model{,_with_test}.json` — manifest: per-seed test metrics, median, chosen seed, `best_epoch`, `best_f1_threshold` (read from the chosen seed's `plots/summary.json` if present), retrain budget, `train_mode`, `included_test_in_training: bool`, paths.
+
+These three `final_model{,_with_test}.*` files form a **self-contained deployment bundle** — copy the trio to any other server and feed them to `scripts/predict.py` (see [Step 7 — Predict on new data](#step-7--predict-on-new-data)).
 
 Worth the extra run only if you have a definite deployment target. For reporting / handoff, the median-seed checkpoint from the original dgt run is sufficient — the retrain is an optional "use all the labels for the final model" step.
 
@@ -212,6 +219,50 @@ For each run you want to record, add an entry to [trained_models.md](trained_mod
 - Anything noteworthy (class imbalance, manual stopping, unusual losses, etc.).
 
 Keep the actual `.ckpt` files in `results/`. When you want to deploy or share a model, copy the chosen one out and reference it from the trained_models entry.
+
+### Step 7 — Predict on new data
+
+Use [scripts/predict.py](../scripts/predict.py) to run a trained DGT classifier on new SMILES. Binary classification only for now (regression is a follow-up).
+
+**Inputs.** A CSV with a SMILES column (default name: `smiles`; override via `--smiles-col`). Any other columns — IDs, third-party labels, metadata — are preserved verbatim in the output.
+
+**Two deployment scenarios:**
+
+1. **Same server / inside the repo** — the pristine YAML is auto-discovered from `configs/`:
+   ```bash
+   python scripts/predict.py \
+     --ckpt   results/DGT/BBBP-DGT-Pipeline/final_model.ckpt \
+     --smiles-csv  new_molecules.csv \
+     --output-csv  predictions.csv
+   ```
+2. **Different server (the deployment bundle).** Copy the three `final_model{,_with_test}.*` sibling files from `<run_dir>/` to a deploy folder, then:
+   ```bash
+   python scripts/predict.py \
+     --ckpt        deploy/final_model.ckpt \
+     --smiles-csv  new_molecules.csv \
+     --output-csv  predictions.csv
+   ```
+   `predict.py` finds the bundled `final_model.config.yaml` and `final_model.json` automatically (sibling-file convention: `<ckpt_stem>.config.yaml` and `<ckpt_stem>.json`).
+
+**Threshold.** Default 0.5 for `y_pred_label`. To use the F1-optimal threshold learned during analysis, pass `--threshold optimal-f1`; this requires the chosen seed's `best_f1_threshold` to have been recorded in `final_model.json` (automatic when `analyze_run.py` was run before `retrain_on_trainval.py`; otherwise pass a numeric threshold).
+
+**Output CSV.** All input columns preserved + three appended columns:
+- `y_pred_score` — class-1 probability (NaN for invalid SMILES).
+- `y_pred_label` — 0/1 at the chosen threshold (NaN for invalid SMILES).
+- `remarks` — empty on success; reason string on failure (e.g. `invalid SMILES: ...`).
+
+**Manually-picked seed (no retrain).** If you didn't run `retrain_on_trainval.py` and want to predict from a hand-picked seed's `<seed>/ckpt/<best_epoch>.ckpt`, point `--orig-config` at the pristine YAML in `configs/`:
+```bash
+python scripts/predict.py \
+  --ckpt        results/DGT/BBBP-DGT-Pipeline/1/ckpt/41.ckpt \
+  --orig-config configs/physiology/BBBP-DGT-Pipeline.yaml \
+  --smiles-csv  new_molecules.csv \
+  --output-csv  predictions.csv
+```
+
+**Cuda-only.** The script fails fast if `torch.cuda.is_available()` returns False — CPU support is not implemented yet.
+
+**Featurisation.** SMILES → atom / bond features inline (matching `torch_geometric.datasets.MoleculeNet` exactly), then the same pre-transform chain `master_loader.py` runs for `PyG-MoleculeNet` (RWSE → SPDE → rings → line-graph → float typecast). No `datasets/` cache is consulted; the script does not require the original training dataset to be present.
 
 ---
 

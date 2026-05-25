@@ -89,6 +89,7 @@ When the context window (auto-compact) reaches 30% remaining, remind me to updat
 - Note any key decisions made in this session
 - Confirm all important context is captured before starting a new session
 let me know where the new session shall start from afterwards.
+- Do not update session_state.md until user request to.
 
 ## Review before moving on
 - Read through code and documents, make sure all are consistent with each other, at the end of each phase before next phase in Roadmap of the development plan.

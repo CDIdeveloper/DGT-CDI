@@ -1,0 +1,7 @@
+smiles,name,note
+CN1C=NC2=C1C(=O)N(C(=O)N2C)C,caffeine,common stimulant
+CC(=O)OC1=CC=CC=C1C(=O)O,aspirin,common analgesic
+CCO,ethanol,small aliphatic
+c1ccc(cc1)O,phenol,aromatic alcohol
+CC(C)Cc1ccc(cc1)C(C)C(=O)O,ibuprofen,common NSAID
+not_a_valid_smiles,bad_input,deliberately invalid — exercises NaN + remarks path
