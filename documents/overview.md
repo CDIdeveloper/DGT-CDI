@@ -86,7 +86,13 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 - [X] Build the env from [environment.yaml](../environment.yaml) (`mamba env create -f environment.yaml`, `conda activate dgt`), then verify imports and CUDA:
   `python -c "import torch, torch_geometric, torch_scatter, graph_tool, rdkit; print(torch.cuda.is_available())"` must print `True`.
 - [X] The device hardcode at [main.py:156](../main.py#L156) (`cfg.device = 'cuda:0'`) is correct on a CUDA box — no patch needed.
-- [ ] apply the LD_PRELOAD activation script, 
+- [ ] **Apply the `LD_PRELOAD` activation script** — fixes the libgomp clash between PyTorch's pip wheel (old bundled `libgomp`) and conda-forge's `graph-tool` (needs `GOMP_5.0`). Without it, the BBBP run crashes at the `rings` pre-transform when `get_rings()` does `import graph_tool` ([transforms.py:186](../graphgps/transform/transforms.py#L186)) with `GOMP_5.0 not found`. Run once on the remote with the `dgt` env active — it installs a conda activate-hook so the correct `libgomp` is preloaded automatically on every `conda activate dgt` (covers `main.py`, `pytest`, and any subprocess):
+  ```bash
+  mkdir -p $CONDA_PREFIX/etc/conda/activate.d $CONDA_PREFIX/etc/conda/deactivate.d
+  echo 'export LD_PRELOAD=$CONDA_PREFIX/lib/libgomp.so.1${LD_PRELOAD:+:$LD_PRELOAD}' > $CONDA_PREFIX/etc/conda/activate.d/zz-libgomp.sh
+  echo 'unset LD_PRELOAD' > $CONDA_PREFIX/etc/conda/deactivate.d/zz-libgomp.sh
+  ```
+  Then `conda deactivate && conda activate dgt` to load the hook; verify with `echo $LD_PRELOAD` (should print `$CONDA_PREFIX/lib/libgomp.so.1`). The single quotes in the `echo`s are deliberate — they keep `$CONDA_PREFIX` literal in the script files so it expands at *activation* time, not when you run the `echo`.
 - [ ] **Smoke test** — confirm the pipeline runs without crashing (BBBP auto-downloads via PyG; the first run also caches the `rings` / `SPD` / `line_graph` / `RWSE` pre-transforms):
   `python main.py --cfg configs/physiology/BBBP-RWSE-SPDE-Rings.yaml --repeat 1 seed 0 wandb.use False optim.max_epoch 3`
 - **Full reproduction** — `python main.py --cfg configs/physiology/BBBP-RWSE-SPDE-Rings.yaml --repeat 4 seed 0 wandb.use False`. Per-seed output lands in `results/DGT/BBBP-RWSE-SPDE-Rings/<seed>/{train,val,test}/stats.json` (one JSON line per epoch); `agg_runs()` writes a mean ± std summary under `agg/`. The best epoch is chosen by validation AUC (`metric_best: auc`).

@@ -285,7 +285,8 @@ DGT(3D) inherits the QM9 configuration.
 - **Weights & Biases** ([graphgps/config/wandb_config.py](../graphgps/config/wandb_config.py)) and **TensorBoardX** for logging; per-experiment YAML toggles `wandb.use`.
 
 ## Interpretation
-The paper interprets predictions with **Grad-SAM** (gradient × self-attention map): node importance is the Hadamard product of element-wise gradients of the target w.r.t. attention activations, averaged over heads and nodes — useful for downstream descriptor-attribution analysis.
+The paper interprets predictions with **Grad-SAM** (gradient × self-attention map): node importance is the Hadamard product of element-wise gradients of the target w.r.t. attention activations, averaged over heads and nodes — useful for downstream descriptor-attribution analysis. 
+Heads carry no built-in meaning, only learned roles. Any specialisation ("this head attends to ring atoms", "this head focuses on far-away pairs") is emergent from training — the optimiser may push different heads into different attention patterns, but it's not designed in.
 
 ## Configs
 YAML configs under [configs/](../configs/), grouped by domain (`biophysics/`, `physical_chemistry/`, `physiology/`, `quantum_mechanics/`), declare model type (`DGTModel` / `DGTModel3D`), encoder stack (e.g. `LinearEdge+RWSE-SPDE`), GT depth / heads / hidden dim, ring & SPD caps, and the training schedule.
