@@ -156,27 +156,52 @@ done
 
 Inspect the four numbers, identify the median (for `--repeat 4` that's the average of the two middle values), and pick the seed whose AUC is closest to it. Its checkpoint at `results/DGT/BBBP-DGT-Pipeline/<seed>/ckpt/<best_epoch>.ckpt` is the model to keep / deploy / share — record that path in [trained_models.md](trained_models.md) in the next step.
 
-**Optional alternative — retrain on `train + val` combined** for deployment. After picking the median seed from the per-seed runs, you can fold val into the training set and retrain on `train + val` for the median seed's best-val epoch. The result is a single deterministic model trained on more data, suitable for deployment / serving / predicting on new molecules.
+**Optional alternative — retrain for deployment.** After picking the median seed from the per-seed runs, you can fold val into the training set and retrain on more data for the median seed's best-val epoch. The result is a single deterministic model trained on more data, suitable for deployment / serving / predicting on new molecules.
 
-**The test set is NOT used** at any point in this retrain — it stays held out. The retrained model has no held-out test estimate of its own; the original dgt-mode aggregated mean ± std remains the reported generalisation estimate.
+#### Two senses of "test data is used"
 
-One-line invocation (auto median-seed selection + auto best-epoch lookup):
+Before invoking the retrain, it's worth being explicit about what "use test data" means — these are two different things and they're often conflated:
+
+1. **Test labels enter training** — test data is concatenated into the training set; the model's weights are updated against test labels. Increases the model's effective training-set size but **destroys** the held-out test set forever.
+2. **Test set is evaluated on the trained model** — predictions are run on test, a metric is computed. This is what the original `dgt`-mode runs already did.
+
+The default retrain uses **(no test labels in training, no re-evaluation on test)** — strictest methodology. An opt-in `--include-test` flag is available for the case described below.
+
+#### Default — train+val only (recommended)
 
 ```bash
 python scripts/retrain_on_trainval.py results/DGT/BBBP-DGT-Pipeline/
 ```
 
-The script:
-1. Reads each seed's `<seed>/test/stats.json`, identifies the seed whose test metric is closest to the median across seeds.
+- Training set: `train + val` combined.
+- The test set's labels never enter the loss; test is not re-evaluated either. The retrained model has no held-out test estimate of its own; the **original dgt-mode aggregated mean ± std remains the reported generalisation estimate** (it's an estimate of a close-relative model trained on just `train`).
+
+#### Opt-in — train+val+test combined (`--include-test`)
+
+```bash
+python scripts/retrain_on_trainval.py results/DGT/BBBP-DGT-Pipeline/ --include-test
+```
+
+- Training set: `train + val + test` combined.
+- Use case: a deployment-only model where you want to squeeze every available label into training, and you'll never need to re-test on this dataset's test split. Defensible because the original dgt-mode runs already produced and reported a valid test estimate.
+- Caveats — read carefully:
+  - The model is trained on **every available label**. No held-out data remains.
+  - The original test metric is a **lower-bound proxy** for this model (the retrained-with-test model has seen more data than the dgt-mode model whose test metric you reported, so likely does at least as well; you can't verify without a brand-new held-out set).
+  - **Re-evaluating this model on the same test split in the future would be leakage** — its predictions there are not generalisation estimates.
+
+#### What the script does (either mode)
+
+1. Reads each seed's `<seed>/test/stats.json`, identifies the seed whose test metric is closest to the median across seeds (neither cherry-picked best nor worst).
 2. Reads that seed's `best_epoch` from `<seed>/test/predictions.pt`.
-3. Subprocesses `main.py` with `train.mode: dgt_retrain` (a parallel alternative to `dgt`), `seed=<chosen>`, `optim.max_epoch=<best_epoch+1>`. The `dgt_retrain` mode at [graphgps/train/dgt_retrain.py](../graphgps/train/dgt_retrain.py) combines `train + val` into a single loader, trains for the given budget, and saves one checkpoint.
+3. Subprocesses `main.py` with `train.mode: dgt_retrain` (default) or `train.mode: dgt_retrain_with_test` (with `--include-test`), `seed=<chosen>`, `optim.max_epoch=<best_epoch+1>`. Both train modes live in [graphgps/train/dgt_retrain.py](../graphgps/train/dgt_retrain.py).
+4. Combines the selected splits into a single training loader, trains for the given budget, saves one checkpoint.
 
 Outputs:
-- `<run_dir>/final/<config_name>/<chosen_seed>/ckpt/<final_epoch>.ckpt` — the retrained model (where main.py writes it).
-- `<run_dir>/final_model.ckpt` — convenience copy at the run root for easy reference.
-- `<run_dir>/final_model.json` — manifest: per-seed test metrics, median, chosen seed, `best_epoch`, retrain budget, paths.
+- `<run_dir>/final{,_with_test}/<config_name>/<chosen_seed>/ckpt/<final_epoch>.ckpt` — the retrained model (where main.py writes it).
+- `<run_dir>/final_model{,_with_test}.ckpt` — convenience copy at the run root for easy reference.
+- `<run_dir>/final_model{,_with_test}.json` — manifest: per-seed test metrics, median, chosen seed, `best_epoch`, retrain budget, `train_mode`, `included_test_in_training: bool`, paths.
 
-Worth the extra run only if you have a definite deployment target. For reporting / handoff, the median-seed checkpoint from the original dgt run is sufficient — the retrain is purely an optional "use all the labels for the final model" step.
+Worth the extra run only if you have a definite deployment target. For reporting / handoff, the median-seed checkpoint from the original dgt run is sufficient — the retrain is an optional "use all the labels for the final model" step.
 
 ### Step 6 — Document the best model in [trained_models.md](trained_models.md)
 

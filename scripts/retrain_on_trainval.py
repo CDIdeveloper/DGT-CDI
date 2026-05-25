@@ -87,13 +87,22 @@ def _pick_median_seed(run_dir: Path, metric: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Retrain on train+val combined using the median-test "
-                    "seed's hyperparameters and best-val epoch."
+        description="Retrain on train+val (or train+val+test) combined using "
+                    "the median-test seed's hyperparameters and best-val "
+                    "epoch."
     )
     parser.add_argument(
         "run_dir", type=Path,
         help="Parent results directory of a finished `train.mode: dgt` run "
              "(e.g. results/DGT/BBBP-DGT-Pipeline/).",
+    )
+    parser.add_argument(
+        "--include-test", action="store_true",
+        help="Also include the test split in the retrain (train+val+test "
+             "combined). Default: train+val only. CAVEAT: the resulting model "
+             "has NO held-out data left. Use only for deployment models where "
+             "no further test estimate is needed; re-testing on this dataset's "
+             "test split afterwards would be leakage.",
     )
     args = parser.parse_args()
 
@@ -133,14 +142,20 @@ def main():
           f"{retrain_epochs} epochs on train+val combined.")
 
     # 3. Subprocess main.py with overrides.
-    final_out_dir = run_dir / 'final'
+    train_mode = "dgt_retrain_with_test" if args.include_test else "dgt_retrain"
+    final_out_dir = run_dir / ("final_with_test" if args.include_test else "final")
+    if args.include_test:
+        print("WARNING: --include-test was set. The retrained model will be "
+              "trained on train + val + TEST combined. The original test "
+              "metric remains the reported number; do NOT re-evaluate this "
+              "model on the same test split (would be leakage).")
     cmd = [
         sys.executable, "main.py",
         "--cfg", str(cfg_path),
         "--repeat", "1",
         "seed", str(int(chosen)),
         "optim.max_epoch", str(retrain_epochs),
-        "train.mode", "dgt_retrain",
+        "train.mode", train_mode,
         "out_dir", str(final_out_dir),
         "wandb.use", "False",
     ]
@@ -157,7 +172,8 @@ def main():
         print(f"Warning: no ckpt produced under {final_run_dir / 'ckpt'}.")
         sys.exit(1)
     src_ckpt = ckpts[-1]
-    dst_ckpt = run_dir / 'final_model.ckpt'
+    suffix = '_with_test' if args.include_test else ''
+    dst_ckpt = run_dir / f'final_model{suffix}.ckpt'
     shutil.copy2(src_ckpt, dst_ckpt)
 
     # 5. Write a tiny manifest for downstream consumers.
@@ -172,12 +188,18 @@ def main():
         'chosen_seed_test_metric': chosen_metric,
         'best_epoch_on_original_val_split': best_epoch,
         'retrain_epochs': retrain_epochs,
+        'train_mode': train_mode,
+        'included_test_in_training': bool(args.include_test),
         'final_run_dir': str(final_run_dir),
         'final_ckpt': str(src_ckpt),
         'final_model_copy': str(dst_ckpt),
-        'note': 'Trained on train+val combined; test set was held out.',
+        'note': (
+            'Trained on train+val+TEST combined; no held-out data remains.'
+            if args.include_test else
+            'Trained on train+val combined; test set was held out.'
+        ),
     }
-    manifest_path = run_dir / 'final_model.json'
+    manifest_path = run_dir / f'final_model{suffix}.json'
     with open(manifest_path, 'w') as fh:
         json.dump(manifest, fh, indent=2)
 

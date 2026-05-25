@@ -1,23 +1,21 @@
-"""Retrain on combined train+val (`train.mode: dgt_retrain`).
+"""Retrain modes for final deployment models.
 
-Companion to `train.mode: dgt`. Used by `scripts/retrain_on_trainval.py` to
-produce a single deterministic model for downstream deployment, *after* the
-experiment phase is done.
+Two parallel train modes are registered here:
 
-Workflow:
-  1. The user runs the experiment with `train.mode: dgt` (--repeat N). Each
-     seed produces its own best-val checkpoint and a final test record.
-  2. `scripts/retrain_on_trainval.py` picks the seed whose test metric is
-     closest to the median across seeds and reads that seed's best-val epoch.
-  3. It then invokes main.py with `train.mode: dgt_retrain` and overrides for
-     `seed` and `optim.max_epoch`.
-  4. This train mode trains on **train + val combined** (NO test data) for
-     `cfg.optim.max_epoch` epochs and saves the resulting checkpoint.
+  - ``dgt_retrain``           — train on **train + val** combined. Test is
+                                 held out. Default / methodologically clean.
+  - ``dgt_retrain_with_test`` — train on **train + val + test** combined.
+                                 Opt-in. The model sees test labels, so there
+                                 is **no held-out data left** for any future
+                                 evaluation.
 
-The test set (`loaders[2]`) is NEVER touched in this mode. There is no
-validation phase either — by construction, val is folded into the training
-set. Use only AFTER you've already estimated generalisation via per-seed
-test metrics from the original dgt-mode runs.
+Both are companions to ``train.mode: dgt``. They're invoked by
+``scripts/retrain_on_trainval.py`` after the experiment phase to produce a
+single deterministic model for downstream deployment.
+
+The script picks the median-test seed from the original ``dgt``-mode runs and
+its best-val epoch; this train mode then trains for ``cfg.optim.max_epoch``
+epochs on the combined data and saves the resulting checkpoint.
 """
 import logging
 from pathlib import Path
@@ -31,21 +29,27 @@ from torch_geometric.loader import DataLoader
 from graphgps.train.custom_train import train_epoch
 
 
-@register_train('dgt_retrain')
-def dgt_retrain(loggers, loaders, model, optimizer, scheduler):
-    """Combine train+val, train for cfg.optim.max_epoch, save the final ckpt."""
+def _run_retrain(loggers, loaders, model, optimizer, scheduler,
+                 *, include_test: bool):
+    """Shared retrain loop.
+
+    Combines train + val (and optionally test) into a single training loader,
+    trains for cfg.optim.max_epoch epochs, saves one final checkpoint.
+    """
     if len(loaders) < 2:
         raise ValueError(
-            "dgt_retrain needs at least 2 loaders (train, val).")
+            "retrain mode needs at least 2 loaders (train, val).")
+    if include_test and len(loaders) < 3:
+        raise ValueError(
+            "dgt_retrain_with_test needs 3 loaders (train, val, test).")
 
     train_logger = loggers[0]
     train_loader, val_loader = loaders[0], loaders[1]
-    # loaders[2] (test) is held out — NEVER read in this mode.
 
-    # Combine train + val datasets into a single training set.
-    combined_dataset = torch.utils.data.ConcatDataset(
-        [train_loader.dataset, val_loader.dataset]
-    )
+    datasets = [train_loader.dataset, val_loader.dataset]
+    if include_test:
+        datasets.append(loaders[2].dataset)
+    combined_dataset = torch.utils.data.ConcatDataset(datasets)
     combined_loader = DataLoader(
         combined_dataset,
         batch_size=train_loader.batch_size,
@@ -56,13 +60,27 @@ def dgt_retrain(loggers, loaders, model, optimizer, scheduler):
 
     n_train = len(train_loader.dataset)
     n_val = len(val_loader.dataset)
+    tag = '[dgt_retrain_with_test]' if include_test else '[dgt_retrain]'
+
+    if include_test:
+        n_test = len(loaders[2].dataset)
+        logging.warning(
+            f"{tag} Combining train + val + TEST: "
+            f"{n_train} + {n_val} + {n_test} = {n_train + n_val + n_test} samples."
+        )
+        logging.warning(
+            f"{tag} Test labels are being used for training. The resulting "
+            f"model has NO held-out data for any future evaluation; do not "
+            f"re-test it on this dataset's test split (would be leakage)."
+        )
+    else:
+        logging.info(
+            f"{tag} Combining train + val: "
+            f"{n_train} + {n_val} = {n_train + n_val} samples. "
+            f"Test set is NOT touched."
+        )
     logging.info(
-        f"[dgt_retrain] Combined train+val: "
-        f"{n_train} + {n_val} = {n_train + n_val} samples."
-    )
-    logging.info(
-        f"[dgt_retrain] Training for {cfg.optim.max_epoch} epochs. "
-        f"Test set is NOT touched."
+        f"{tag} Training for {cfg.optim.max_epoch} epochs."
     )
 
     for cur_epoch in range(cfg.optim.max_epoch):
@@ -76,13 +94,25 @@ def dgt_retrain(loggers, loaders, model, optimizer, scheduler):
         else:
             scheduler.step()
         logging.info(
-            f"[dgt_retrain] Epoch {cur_epoch}: "
-            f"train_loss={stats['loss']:.4f}"
+            f"{tag} Epoch {cur_epoch}: train_loss={stats['loss']:.4f}"
         )
 
-    # Save the final checkpoint (only one, at the last epoch).
     final_epoch = cfg.optim.max_epoch - 1
     save_ckpt(model, optimizer, scheduler, final_epoch)
     final_ckpt = Path(cfg.run_dir) / 'ckpt' / f'{final_epoch}.ckpt'
-    logging.info(f"[dgt_retrain] Saved final model: {final_ckpt}")
+    logging.info(f"{tag} Saved final model: {final_ckpt}")
     train_logger.close()
+
+
+@register_train('dgt_retrain')
+def dgt_retrain(loggers, loaders, model, optimizer, scheduler):
+    """Retrain on train + val combined. Test loader is NEVER read."""
+    _run_retrain(loggers, loaders, model, optimizer, scheduler,
+                 include_test=False)
+
+
+@register_train('dgt_retrain_with_test')
+def dgt_retrain_with_test(loggers, loaders, model, optimizer, scheduler):
+    """Retrain on train + val + TEST combined. Opt-in; no held-out data left."""
+    _run_retrain(loggers, loaders, model, optimizer, scheduler,
+                 include_test=True)
