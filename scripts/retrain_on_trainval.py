@@ -52,6 +52,33 @@ def _find_seed_dirs(run_dir: Path):
     return seeds
 
 
+def _find_original_config(run_dir: Path) -> Path:
+    """Locate the pristine YAML in `configs/` that matches this run_dir.
+
+    The dumped `<run_dir>/config.yaml` contains runtime-set keys (`run_dir`,
+    `params`, `run_id`, ...) that yacs rejects when reloaded via
+    `cfg.merge_from_file` in strict mode. So we re-feed the original file
+    from `configs/`, which has only the user-set fields.
+    """
+    config_name = run_dir.name  # e.g. 'BBBP-DGT-Pipeline'
+    configs_root = REPO_ROOT / 'configs'
+    candidates = list(configs_root.rglob(f'{config_name}.yaml'))
+    if not candidates:
+        raise FileNotFoundError(
+            f"Could not find original '{config_name}.yaml' under "
+            f"{configs_root}/. Pass --orig-config <path> to point at it "
+            "explicitly. (The dumped <run_dir>/config.yaml can't be reused "
+            "directly because yacs rejects runtime-set keys on reload.)"
+        )
+    if len(candidates) > 1:
+        raise RuntimeError(
+            f"Multiple matches for '{config_name}.yaml': "
+            f"{[str(p) for p in candidates]}. Pass --orig-config <path> to "
+            "specify which one to use."
+        )
+    return candidates[0]
+
+
 def _pick_median_seed(run_dir: Path, metric: str):
     """Return (chosen_seed_name, chosen_metric, per_seed_dict, median)."""
     seed_dirs = _find_seed_dirs(run_dir)
@@ -104,18 +131,33 @@ def main():
              "no further test estimate is needed; re-testing on this dataset's "
              "test split afterwards would be leakage.",
     )
+    parser.add_argument(
+        "--orig-config", type=Path, default=None,
+        help="Explicit path to the original (pristine) YAML used for this "
+             "run. Defaults to auto-discovery: configs/**/<run_dir_name>.yaml. "
+             "Specify this if the auto-search can't find a unique match.",
+    )
     args = parser.parse_args()
 
     run_dir: Path = args.run_dir.resolve()
     if not run_dir.is_dir():
         raise FileNotFoundError(f"Not a directory: {run_dir}")
 
-    cfg_path = run_dir / "config.yaml"
-    if not cfg_path.is_file():
-        raise FileNotFoundError(f"Missing {cfg_path}")
-    with open(cfg_path) as fh:
+    dumped_cfg_path = run_dir / "config.yaml"
+    if not dumped_cfg_path.is_file():
+        raise FileNotFoundError(f"Missing {dumped_cfg_path}")
+    with open(dumped_cfg_path) as fh:
         cfg = yaml.safe_load(fh)
     metric_best = cfg.get('metric_best', 'auc')
+
+    # main.py reloads via yacs which rejects runtime-set keys in the dumped
+    # config; point it at the pristine original from configs/ instead.
+    orig_cfg_path = (args.orig_config.resolve()
+                     if args.orig_config is not None
+                     else _find_original_config(run_dir))
+    if not orig_cfg_path.is_file():
+        raise FileNotFoundError(f"Missing original config: {orig_cfg_path}")
+    print(f"Original config (used for retrain): {orig_cfg_path}")
 
     # 1. Pick the median seed.
     chosen, chosen_metric, per_seed, median = _pick_median_seed(
@@ -151,7 +193,7 @@ def main():
               "model on the same test split (would be leakage).")
     cmd = [
         sys.executable, "main.py",
-        "--cfg", str(cfg_path),
+        "--cfg", str(orig_cfg_path),
         "--repeat", "1",
         "seed", str(int(chosen)),
         "optim.max_epoch", str(retrain_epochs),
@@ -165,7 +207,7 @@ def main():
         sys.exit(result.returncode)
 
     # 4. Identify and copy the final ckpt to a stable filename.
-    config_name = cfg_path.stem
+    config_name = orig_cfg_path.stem
     final_run_dir = final_out_dir / config_name / str(int(chosen))
     ckpts = sorted((final_run_dir / 'ckpt').glob('*.ckpt'))
     if not ckpts:
@@ -179,7 +221,8 @@ def main():
     # 5. Write a tiny manifest for downstream consumers.
     manifest = {
         'source_run': str(run_dir),
-        'config': str(cfg_path),
+        'config_dumped': str(dumped_cfg_path),
+        'config_original': str(orig_cfg_path),
         'config_name': config_name,
         'metric_best': metric_best,
         'per_seed_test_metric': per_seed,
