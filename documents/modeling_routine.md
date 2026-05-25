@@ -222,7 +222,7 @@ Keep the actual `.ckpt` files in `results/`. When you want to deploy or share a 
 
 ### Step 7 — Predict on new data
 
-Use [scripts/predict.py](../scripts/predict.py) to run a trained DGT classifier on new SMILES. Binary classification only for now (regression is a follow-up).
+Use [scripts/predict.py](../scripts/predict.py) to run a trained DGT model on new SMILES. Supports both **binary classification** (`task_type: classification_binary`) and **single-target regression** (`task_type: regression`); the task type is read from the bundled config — no CLI flag needed.
 
 **Inputs.** A CSV with a SMILES column (default name: `smiles`; override via `--smiles-col`). Any other columns — IDs, third-party labels, metadata — are preserved verbatim in the output.
 
@@ -244,12 +244,18 @@ Use [scripts/predict.py](../scripts/predict.py) to run a trained DGT classifier 
    ```
    `predict.py` finds the bundled `final_model.config.yaml` and `final_model.json` automatically (sibling-file convention: `<ckpt_stem>.config.yaml` and `<ckpt_stem>.json`).
 
-**Threshold.** Default 0.5 for `y_pred_label`. To use the F1-optimal threshold learned during analysis, pass `--threshold optimal-f1`; this requires the chosen seed's `best_f1_threshold` to have been recorded in `final_model.json` (automatic when `analyze_run.py` was run before `retrain_on_trainval.py`; otherwise pass a numeric threshold).
+**Threshold (classification only).** Default 0.5 for `y_pred_label`. To use the F1-optimal threshold learned during analysis, pass `--threshold optimal-f1`; this requires the chosen seed's `best_f1_threshold` to have been recorded in `final_model.json` (automatic when `analyze_run.py` was run before `retrain_on_trainval.py`; otherwise pass a numeric threshold). The flag is silently ignored for regression checkpoints.
 
-**Output CSV.** All input columns preserved + three appended columns:
+**Output CSV.** All input columns preserved + appended columns (schema depends on task type):
+
+*Binary classification:*
 - `y_pred_score` — class-1 probability (NaN for invalid SMILES).
 - `y_pred_label` — 0/1 at the chosen threshold (NaN for invalid SMILES).
 - `remarks` — empty on success; reason string on failure (e.g. `invalid SMILES: ...`).
+
+*Regression:*
+- `y_pred` — predicted target value (NaN for invalid SMILES).
+- `remarks` — empty on success; reason string on failure.
 
 **Manually-picked seed (no retrain).** If you didn't run `retrain_on_trainval.py` and want to predict from a hand-picked seed's `<seed>/ckpt/<best_epoch>.ckpt`, point `--orig-config` at the pristine YAML in `configs/`:
 ```bash

@@ -1,4 +1,8 @@
-"""Inference on new SMILES with a trained DGT classifier.
+"""Inference on new SMILES with a trained DGT model.
+
+Supports both binary-classification (`task_type: classification_binary`) and
+single-target regression (`task_type: regression`) checkpoints. The task type
+is read from the bundled config — no CLI flag needed.
 
 CLI
 ---
@@ -7,7 +11,9 @@ CLI
         --smiles-csv  <input.csv>                    (required)
         --output-csv  <output.csv>                   (required)
         [--orig-config <path>]                       (default: auto-discover)
-        [--threshold  0.5 | optimal-f1]              (default: 0.5)
+        [--threshold  0.5 | optimal-f1]              (classification-only;
+                                                      default 0.5; ignored
+                                                      for regression)
         [--batch-size 64]                            (default: 64)
         [--smiles-col smiles]                        (default: 'smiles')
 
@@ -19,37 +25,46 @@ Inference flow
       a. --orig-config <path>                          (explicit override)
       b. <ckpt_dir>/<ckpt_stem>.config.yaml            (deployment bundle)
       c. <REPO_ROOT>/configs/**/<run_name>.yaml        (repo auto-discovery)
-2.  Resolve the threshold:
+2.  Read `cfg.dataset.task_type` to branch the rest of the flow.
+3.  For classification only: resolve the threshold:
       - numeric  → use as-is
       - 'optimal-f1'  → read 'best_f1_threshold' from
                         <ckpt_dir>/<ckpt_stem>.json (manifest written by
                         retrain_on_trainval.py).
-3.  Read input CSV (pandas). Per row: parse SMILES with RDKit; invalid rows
+4.  Read input CSV (pandas). Per row: parse SMILES with RDKit; invalid rows
     get NaN + a reason string and are skipped during inference.
-4.  Featurise valid SMILES with the SAME atom / bond featurisation as
+5.  Featurise valid SMILES with the SAME atom / bond featurisation as
     torch_geometric.datasets.MoleculeNet (copied inline below so this script
     is independent of the PyG version's utils namespace), then apply the
     same pre-transform chain master_loader runs for PyG-MoleculeNet:
       compute_posenc_stats(RWSE) → compute_shortest_paths → add_rings →
       line_graph → typecast_x_and_edge_attr(float).
-5.  Build the model via network_dict[cfg.model.type], load checkpoint
-    state_dict.
-6.  Batched inference via PyG DataLoader. Logits are sigmoid'd (binary
-    classification) for class-1 probability.
-7.  Merge predictions into original row order; apply threshold for
-    y_pred_label; write output CSV.
+6.  Build the model via network_dict[cfg.model.type], load checkpoint
+    state_dict. `dim_out = 1` for both task types currently supported.
+7.  Batched inference via PyG DataLoader.
+      classification_binary  →  sigmoid(logit)         → class-1 probability
+      regression             →  raw model output       → predicted target
+8.  Merge predictions into original row order; for classification, apply the
+    threshold to derive `y_pred_label`; write output CSV.
 
 Output CSV
 ----------
-All input columns preserved + 3 appended columns:
-    y_pred_score  (float)  class-1 probability; NaN for invalid SMILES
-    y_pred_label  (int)    0/1 at the chosen threshold; NaN for invalid
-    remarks       (str)    empty for successful rows; reason for invalid
+All input columns preserved + appended columns (schema depends on task type):
+
+    classification_binary:
+        y_pred_score  (float)  class-1 probability; NaN for invalid SMILES
+        y_pred_label  (int)    0/1 at the chosen threshold; NaN for invalid
+        remarks       (str)    empty for successful rows; reason for invalid
+
+    regression:
+        y_pred        (float)  predicted target value; NaN for invalid SMILES
+        remarks       (str)    empty for successful rows; reason for invalid
 
 Scope
 -----
 - Cuda-only (no --device flag — fails fast if CUDA is unavailable).
-- Binary classification only. Regression is a follow-up.
+- Binary classification and single-target regression are supported.
+  Multi-target regression / multi-label classification are not.
 - Deployment bundle = 3 sibling files in one folder:
       final_model.ckpt
       final_model.config.yaml
@@ -261,14 +276,17 @@ def _apply_pretransforms(data: Data) -> Data:
 def _build_model(ckpt_path: Path) -> torch.nn.Module:
     """Construct the DGT model and load checkpoint weights."""
     dim_in = cfg.share.dim_in
-    # Mirror main.py:create_model — binary classification collapses dim_out 2 → 1.
-    dim_out = 2
-    if (
-        'classification' in cfg.dataset.task_type
-        and 'multilabel' not in cfg.dataset.task_type
-        and dim_out == 2
-    ):
+    task_type = cfg.dataset.task_type
+    # Both supported task types use a single output dim:
+    #   classification_binary → 1 logit (sigmoid → probability)
+    #   regression            → 1 predicted target value
+    if task_type in ('classification_binary', 'regression'):
         dim_out = 1
+    else:
+        raise NotImplementedError(
+            f"task_type={task_type!r} is not supported by predict.py. "
+            f"Currently: 'classification_binary' and 'regression'."
+        )
 
     model = network_dict[cfg.model.type](dim_in=dim_in, dim_out=dim_out)
     device = torch.device(cfg.device)
@@ -286,24 +304,34 @@ def _build_model(ckpt_path: Path) -> torch.nn.Module:
 
 
 @torch.no_grad()
-def _run_inference(model, data_list, batch_size):
-    """Return a 1-D numpy array of class-1 probabilities, one per Data."""
+def _run_inference(model, data_list, batch_size, task_type):
+    """Return a 1-D numpy array of per-sample predictions.
+
+    classification_binary  →  class-1 probability (sigmoid applied)
+    regression             →  raw model output
+    """
     device = torch.device(cfg.device)
     loader = DataLoader(data_list, batch_size=batch_size, shuffle=False)
-    scores = []
+    preds = []
     for batch in loader:
         batch.split = 'test'
         batch.to(device)
         with torch.autocast(device_type='cuda'):
             pred, _ = model(batch)
-        scores.append(torch.sigmoid(pred.float()).cpu().numpy().reshape(-1))
-    return np.concatenate(scores, axis=0) if scores else np.array([])
+        pred = pred.float().cpu()
+        if task_type == 'classification_binary':
+            preds.append(torch.sigmoid(pred).numpy().reshape(-1))
+        else:  # regression
+            preds.append(pred.numpy().reshape(-1))
+    return np.concatenate(preds, axis=0) if preds else np.array([])
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run DGT inference on new SMILES "
-                    "(binary classification only).",
+        description="Run DGT inference on new SMILES. "
+                    "Supports binary-classification and single-target "
+                    "regression checkpoints; the task type is read from "
+                    "the bundled config.",
     )
     parser.add_argument("--ckpt", type=Path, required=True,
                         help="Path to a trained .ckpt file.")
@@ -316,9 +344,11 @@ def main():
                              "<ckpt_dir>/<ckpt_stem>.config.yaml then "
                              "configs/**/<run_name>.yaml.")
     parser.add_argument("--threshold", type=str, default='0.5',
-                        help="Decision threshold for y_pred_label. Either a "
-                             "float in (0,1) or 'optimal-f1' to look it up "
-                             "from <ckpt_dir>/<ckpt_stem>.json. Default: 0.5.")
+                        help="Classification-only. Decision threshold for "
+                             "y_pred_label: either a float in (0,1) or "
+                             "'optimal-f1' to look it up from "
+                             "<ckpt_dir>/<ckpt_stem>.json. Default: 0.5. "
+                             "Ignored for regression task type.")
     parser.add_argument("--batch-size", type=int, default=64,
                         help="Inference batch size. Default: 64.")
     parser.add_argument("--smiles-col", type=str, default='smiles',
@@ -339,8 +369,21 @@ def main():
     print(f"Using config: {orig_config}")
     _bootstrap_cfg(orig_config)
 
-    threshold = _resolve_threshold(ckpt_path, args.threshold)
-    print(f"Using threshold: {threshold:.4f}")
+    task_type = cfg.dataset.task_type
+    print(f"Task type: {task_type}")
+    if task_type == 'classification_binary':
+        threshold = _resolve_threshold(ckpt_path, args.threshold)
+        print(f"Using threshold: {threshold:.4f}")
+    elif task_type == 'regression':
+        if args.threshold != '0.5':
+            print(f"Note: --threshold={args.threshold!r} ignored for "
+                  "regression task.")
+        threshold = None
+    else:
+        raise NotImplementedError(
+            f"task_type={task_type!r} is not supported by predict.py. "
+            f"Currently: 'classification_binary' and 'regression'."
+        )
 
     df = pd.read_csv(args.smiles_csv)
     if args.smiles_col not in df.columns:
@@ -362,18 +405,23 @@ def main():
           f"{len(df) - len(valid_indices)} invalid.")
 
     model = _build_model(ckpt_path)
-    scores = _run_inference(model, valid_data, args.batch_size)
-    assert len(scores) == len(valid_indices), \
-        f"Score count {len(scores)} != valid row count {len(valid_indices)}"
+    preds = _run_inference(model, valid_data, args.batch_size, task_type)
+    assert len(preds) == len(valid_indices), \
+        f"Prediction count {len(preds)} != valid row count {len(valid_indices)}"
 
-    y_score = np.full(len(df), np.nan, dtype=float)
-    y_label = np.full(len(df), np.nan, dtype=float)
-    for idx, s in zip(valid_indices, scores):
-        y_score[idx] = float(s)
-        y_label[idx] = 1.0 if s >= threshold else 0.0
-
-    df['y_pred_score'] = y_score
-    df['y_pred_label'] = y_label
+    if task_type == 'classification_binary':
+        y_score = np.full(len(df), np.nan, dtype=float)
+        y_label = np.full(len(df), np.nan, dtype=float)
+        for idx, s in zip(valid_indices, preds):
+            y_score[idx] = float(s)
+            y_label[idx] = 1.0 if s >= threshold else 0.0
+        df['y_pred_score'] = y_score
+        df['y_pred_label'] = y_label
+    else:  # regression
+        y_pred = np.full(len(df), np.nan, dtype=float)
+        for idx, p in zip(valid_indices, preds):
+            y_pred[idx] = float(p)
+        df['y_pred'] = y_pred
     df['remarks'] = remarks
 
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
