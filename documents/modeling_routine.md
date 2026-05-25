@@ -2,11 +2,12 @@
 
 Practical notes for running the DGT training pipeline day-to-day. For the conceptual model, see [overview.md](overview.md); for the implementation inventory, [tech.md](tech.md).
 
-This doc covers four things:
+This doc covers five things:
 1. [Where each thing already lives](#where-each-thing-already-lives) — file/location reference for testing, metrics, checkpoints, predictions, plots.
 2. [Step-by-step procedure](#step-by-step-procedure) — env setup → training+val → testing → analysis → recording the best model.
-3. [Recommended workflow](#recommended-workflow-cleanup-between-runs) — what to clean between runs and why.
-4. (External) [trained_models.md](trained_models.md) — registry where the best model from each run is documented.
+3. [Hyperparameter exploration](#hyperparameter-exploration) — which knobs matter most, with typical sweep ranges.
+4. [Recommended workflow](#recommended-workflow-cleanup-between-runs) — what to clean between runs and why (situation-based + by parameter category).
+5. (External) [trained_models.md](trained_models.md) — registry where the best model from each run is documented.
 
 ---
 
@@ -139,6 +140,39 @@ Keep the actual `.ckpt` files in `results/`. When you want to deploy or share a 
 
 ---
 
+## Hyperparameter exploration
+
+For **reproducing the paper on benchmark datasets** (BBBP, QM9, etc.), the per-dataset settings in [tech.md → Per-dataset DGT hyperparameters](tech.md#per-dataset-dgt-hyperparameters) already match what the authors landed on — usually no sweep needed.
+
+For **your own data** (e.g. biodegradability in Phases 3+), a small grid over the highest-impact knobs is usually worthwhile because the right values depend on dataset size and class imbalance, which neither you nor the paper knows in advance. The table below groups parameters by typical impact on test performance; tune from the top down.
+
+| Tier | Parameter (location) | Default (BBBP-DGT-Pipeline) | Typical sweep |
+|---|---|---|---|
+| **High impact** | `optim.base_lr` | `4e-4` | `1e-3`, `4e-4`, `1e-4` |
+|  | `gnn.dim_inner` + `gt.dim_hidden` (must match) | `128` | `64`, `128`, `256` |
+|  | `gt.layers` | `4` | `3`, `4`, `6` |
+|  | `optim.weight_decay` | `1e-2` | `1e-1`, `1e-2`, `1e-3`, `0` |
+| **Medium impact** | `gt.n_heads` (must divide `dim_hidden`) | `16` | `8`, `16`, `32` |
+|  | `gt.dropout`, `gt.attn_dropout` | `0.0`, `0.3` | `0.0–0.2` for `dropout`; `0.1–0.4` for `attn_dropout` |
+|  | `gnn.layers_post_mp` | `3` | `2`, `3` |
+|  | `train.batch_size` | `32` | `16`, `32`, `64` (memory-bound) |
+|  | `optim.num_warmup_epochs` | `10` | ~10 % of `max_epoch` |
+| **Pre-transform** (requires cleanup — see below) | `dataset.spd_max_length` | `8` | `6`, `8`, `12` |
+|  | `dataset.rings_max_length` | `18` | `6`, `12`, `18` |
+|  | `posenc_RWSE.kernel.times_func` | `range(1,17)` | `range(1,9)`, `range(1,17)`, `range(1,25)` |
+
+**One config per variant.** When sweeping, copy the YAML to a new filename rather than editing in place:
+
+```
+configs/physiology/BBBP-DGT-Pipeline.yaml            # baseline
+configs/physiology/BBBP-DGT-Pipeline-lr1e3.yaml      # base_lr = 1e-3
+configs/physiology/BBBP-DGT-Pipeline-dim256-L6.yaml  # dim_inner=256, layers=6
+```
+
+Each variant lands in its own `results/DGT/<config_name>/` directory, so seeds don't collide, `agg_runs()` doesn't mix variants, and the "which config produced which numbers" trail stays clean.
+
+---
+
 ## Recommended workflow (cleanup between runs)
 
 When and what to clean between training runs. Default is to clean **nothing** — the file caches and per-seed run dirs are reused or refreshed automatically. Manual cleanup is only needed in the specific situations below.
@@ -149,3 +183,17 @@ When and what to clean between training runs. Default is to clean **nothing** �
 | Changed pre-transform params (`spd_max_length`, `rings_max_length`, RWSE `times_func`, etc.) | `rm -rf datasets/<DatasetName>/processed/` | PyG keys the cache by **dataset class + root path only** — it does **not** detect changes to your YAML's pre-transform parameters. Without manual cleanup, the run silently reuses stale processed data and you'd be training on the *old* parameter values. Leave `raw/` alone so the dataset isn't re-downloaded. |
 | Changed `--repeat N` between runs (e.g. 4 → 2) | `rm -rf results/DGT/<config_name>/` before re-running | Each per-seed dir is wiped on re-run, but the parent dir is not. Going from `--repeat 4` to `--repeat 2` leaves the old `2/` and `3/` seed dirs in place, and `agg_runs()` at the end of `main.py` will fold them into the aggregated mean ± std alongside the new runs — mixing old and new results. |
 | Changed dataset loader / featurisation code (`graphgps/loader/dataset/...`) | `rm -rf datasets/<DatasetName>/processed/` | The processed cache reflects the previous loader's output (atom / bond features, edge_index, attached tensors). PyG doesn't notice that the loader changed, so a stale cache would silently feed the model wrong / old data. |
+
+### Cleanup by parameter category (quick reference for HPO sweeps)
+
+If you're only changing YAML hyperparameters (no code changes), this table maps each parameter category to the cleanup action needed. Tiers reference the [Hyperparameter exploration](#hyperparameter-exploration) section above.
+
+| Parameter category | Cleanup needed? | Why |
+|---|---|---|
+| `optim.*` (lr, weight_decay, max_epoch, scheduler, warmup) | **No** | Optimization-only — no effect on data cache; per-seed run dirs auto-wipe. |
+| `gt.*`, `gnn.*` (layers, dim_hidden, n_heads, dropout, post_mp depth, etc.) | **No** | Model architecture only. Dataset cache unaffected. |
+| `train.batch_size`, `train.eval_period` | **No** | Training control, not data. |
+| `dataset.spd_max_length`, `dataset.rings_max_length`, `posenc_RWSE.kernel.times_func` | **Yes** — `rm -rf datasets/<DatasetName>/processed/` | Pre-transform parameters. PyG's `processed/` cache won't detect the YAML change. |
+| `--repeat N` between runs | **Yes** — `rm -rf results/DGT/<config_name>/` | Old seed dirs would otherwise be folded into `agg_runs()`'s mean ± std. |
+
+**Bottom line:** cleanup is only needed for **pre-transform** changes and the `--repeat N` case. All Tier-1 / Tier-2 knobs (lr, dim, layers, dropout, batch size, etc.) require **zero cleanup**.
