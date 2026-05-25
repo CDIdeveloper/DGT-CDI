@@ -40,6 +40,8 @@ A clean run from a fresh shell on the remote, using BBBP as the worked example. 
 
 ### Step 1 — Set up the environment
 
+**Pipeline at a glance.** With `--repeat N seed 0`, training runs as `N` independent seeds (`0..N-1`). Inside each seed: training + validation runs every epoch; the test set is **held out** and run **once** at the very end on that seed's best-val checkpoint, producing `<seed>/test/stats.json` (one line) and `<seed>/test/predictions.pt` — see Step 3 for the mechanics. After all `N` seeds finish, `agg_runs()` in `main.py` reads each seed's `train/val/test/stats.json` and writes **mean ± std across seeds** into `results/DGT/<config_name>/agg/` — that folder is the run's headline result; Step 5 covers how to read it.
+
 ```bash
 # On the remote, in the repo root.
 mamba activate dgt
