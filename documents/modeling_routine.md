@@ -128,6 +128,34 @@ For regression, look at:
 - `scatter.png` — quality of fit + outliers.
 - `residual.png` — bias as a function of predicted value (look for tilt or fanning).
 
+#### Picking which seed's checkpoint to keep for downstream use
+
+The **aggregated** mean ± std (from `agg/test/best.json`) is the right number to **report** — it captures uncertainty honestly. But if you need a single concrete model for deployment, predicting on new molecules, or sharing a checkpoint, you have to pick **one** seed's `.ckpt` from the `--repeat N` runs.
+
+The honest selection rule is **pick the seed whose test metric is closest to the median across seeds**:
+
+- ✗ **Don't pick the best seed.** That's cherry-picking — the resulting checkpoint is biased upward relative to the population, so downstream performance will systematically under-perform expectations set by the reported mean.
+- ✗ **Don't pick the worst seed.** Equally unrepresentative in the other direction.
+- ✓ **Pick the seed closest to the median test metric.** Representative of typical behaviour and closest to the aggregated mean you reported.
+
+Concretely (BBBP example — replace `auc` with `mae` for regression, etc.):
+
+```bash
+# Per-seed test metric:
+for s in 0 1 2 3; do
+  printf "seed %s: " "$s"
+  python -c "
+import json
+last = [json.loads(l) for l in open('results/DGT/BBBP-DGT-Pipeline/$s/test/stats.json')][-1]
+print(last['auc'])
+"
+done
+```
+
+Inspect the four numbers, identify the median (for `--repeat 4` that's the average of the two middle values), and pick the seed whose AUC is closest to it. Its checkpoint at `results/DGT/BBBP-DGT-Pipeline/<seed>/ckpt/<best_epoch>.ckpt` is the model to keep / deploy / share — record that path in [trained_models.md](trained_models.md) in the next step.
+
+**Optional alternative — retrain on `train + val` combined** with the chosen hyperparameters and seed. This uses more data and produces a single deterministic model. Worth the extra run only if you have a definite deployment target and want every example squeezed for training; for most reporting / handoff purposes the median-seed checkpoint is sufficient.
+
 ### Step 6 — Document the best model in [trained_models.md](trained_models.md)
 
 For each run you want to record, add an entry to [trained_models.md](trained_models.md) with:

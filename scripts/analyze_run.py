@@ -41,8 +41,21 @@ from sklearn.metrics import (
 
 
 def _load_config(run_dir: Path) -> dict:
-    with open(run_dir / "config.yaml") as fh:
-        return yaml.safe_load(fh)
+    """Load the dumped GraphGym config.
+
+    GraphGym writes a single `config.yaml` to the parent `out_dir` (shared by
+    all `--repeat N` seed subdirs), but some workflows also keep a copy inside
+    the per-seed dir. Search both — per-seed first, then parent.
+    """
+    for candidate in (run_dir / "config.yaml", run_dir.parent / "config.yaml"):
+        if candidate.is_file():
+            with open(candidate) as fh:
+                return yaml.safe_load(fh)
+    raise FileNotFoundError(
+        f"config.yaml not found in {run_dir} or {run_dir.parent}. "
+        "GraphGym normally writes it to the parent (out_dir). Confirm "
+        f"{run_dir} is a per-seed directory like results/DGT/<config_name>/<seed>."
+    )
 
 
 def _to_1d_numpy(t: torch.Tensor) -> np.ndarray:
@@ -198,12 +211,6 @@ def main() -> None:
     if not run_dir.is_dir():
         raise FileNotFoundError(f"Not a directory: {run_dir}")
 
-    cfg_path = run_dir / "config.yaml"
-    if not cfg_path.is_file():
-        raise FileNotFoundError(
-            f"Missing {cfg_path}. Make sure {run_dir} is a per-seed run "
-            "directory (not the parent), and that GraphGym dumped the config."
-        )
     cfg = _load_config(run_dir)
     task_type = cfg["dataset"]["task_type"]
 
