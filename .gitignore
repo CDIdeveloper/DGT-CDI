@@ -1,3 +1,11 @@
+# DGT training output
+results/
+
+# Auto-downloaded / cached datasets (keep curated split files tracked)
+datasets/*
+!datasets/QM9_split/
+!datasets/QM9_split/**
+
 tests/**/report_*
 tests/**/progress.json
 .DS_Store
