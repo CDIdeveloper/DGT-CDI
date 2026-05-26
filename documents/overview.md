@@ -117,15 +117,19 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 - [X] **Record the chosen model** in [trained_models.md](trained_models.md) — date, config path, git SHA, chosen seed, best-val + test metrics, checkpoint path. See [modeling_routine.md](modeling_routine.md) for the full step-by-step.
 - [X] code to train final model using the best parameter. train with/without test data.
 - [X] generate code to make predictions for new data — see [scripts/predict.py](../scripts/predict.py) (binary classification + single-target regression; cuda-only). Deployment bundle = `<run_dir>/final_model{,_with_test}.{ckpt,config.yaml,json}` (the three sibling files are written by `retrain_on_trainval.py`; copy the trio together to any other server). Worked example in [modeling_routine.md → Step 7](modeling_routine.md#step-7--predict-on-new-data).
-- [ ] re-run training of final model see if all 3 files are saved together: three `final_model{,_with_test}.*` files.
-- [ ] test on a regression task. added FreeSolv-DGT-Pipeline.yaml, command:
+- [X] re-run training of final model see if all 3 files are saved together: three `final_model{,_with_test}.*` files. its under results/DGT/<data_name>-Pipeline/
+- [X] test on a regression task. added FreeSolv-DGT-Pipeline.yaml, command:
   `
   python main.py \
   --cfg configs/physical_chemistry/FreeSolv-DGT-Pipeline.yaml \
   --repeat 2 seed 0 wandb.use False optim.max_epoch 50
   `
+  and train final model for this regression case:
+  `
+  python scripts/retrain_on_trainval.py results/DGT/FreeSolv-DGT-Pipeline/ --include-test
+  `
 - [X] **Follow-up to `predict.py`:** extend to regression task type (output schema: just `y_pred`, no threshold / `y_pred_label`). `--threshold` is silently ignored when `cfg.dataset.task_type == 'regression'`.
-- [ ] test predict.py, for classification:
+- [X] test predict.py, for classification:
   `
   python scripts/predict.py \
   --ckpt results/DGT/BBBP-DGT-Pipeline/final_model.ckpt \
@@ -135,15 +139,10 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
   and for regression (requires the FreeSolv-DGT-Pipeline run above to have finished and `retrain_on_trainval.py` to have been run):
   `
   python scripts/predict.py \
-  --ckpt results/DGT/FreeSolv-DGT-Pipeline/final_model.ckpt \
+  --ckpt results/DGT/FreeSolv-DGT-Pipeline/final_model_with_test.ckpt \
   --smiles-csv tests/sample_smiles.csv \
   --output-csv /tmp/predict_out_reg.csv
   `
-
-- [ ] **Follow-up to `predict.py`:** add `tests/test_predict.py` — round-trip smoke test on a tiny CSV (e.g. 3 valid + 1 invalid SMILES) against a small checkpoint.
-- [ ] discuss if following two steps is still necessary.
-- [ ] Add the end-to-end regression test [tests/test_e2e_bbbp.py](../tests/test_e2e_bbbp.py) and register the `e2e` marker in [pytest.ini](../pytest.ini). It runs a **reduced BBBP run (2 seeds × 30 epochs)** via subprocess on the **original** [BBBP-RWSE-SPDE-Rings.yaml](../configs/physiology/BBBP-RWSE-SPDE-Rings.yaml) (i.e. the upstream `custom` train mode — so the gate keeps testing the core DGT pipeline, not just the new wrapper). Asserts: exit code 0; 30 epochs of stats per split; no NaN losses; best val ROC-AUC > 0.62 (a conservative floor — 30 epochs is deliberately under-trained); per-seed results dirs populated. Marked `e2e`, so the default `pytest` skips it; run with `pytest -m e2e`.
-- [ ] **Verify:** smoke test exits 0; the full run converges (train loss ↓, val AUC ↑) with final aggregated test ROC-AUC in the paper's BBBP ballpark (Supplementary §6.1 / main results table); analysis script produces non-empty `plots/` + `summary.json` for each seed; `pytest -m e2e` passes.
 
 ## Phase 1 — Dataset integration
 - Add `datasets/biodegradability/{train.csv, test.csv}`.

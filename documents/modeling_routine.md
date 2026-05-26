@@ -63,7 +63,7 @@ If either check fails, see overview.md Phase 0 (env build + LD_PRELOAD section).
 
 ```bash
 # BBBP with the DGT pipeline (train+val each epoch; test held out).
-# --repeat 4 → seeds 0, 1, 2, 3 (matches the paper's 4-seed averaging).
+# --repeat 4 → seeds 0, 1, 2, 3 (seeds starting from 0 different seed for each repeat).
 python main.py \
   --cfg configs/physiology/BBBP-DGT-Pipeline.yaml \
   --repeat 4 seed 0 wandb.use False
@@ -201,12 +201,15 @@ python scripts/retrain_on_trainval.py results/DGT/BBBP-DGT-Pipeline/ --include-t
 4. Combines the selected splits into a single training loader, trains for the given budget, saves one checkpoint.
 
 Outputs:
-- `<run_dir>/final{,_with_test}/<config_name>/<chosen_seed>/ckpt/<final_epoch>.ckpt` — the retrained model (where main.py writes it).
-- `<run_dir>/final_model{,_with_test}.ckpt` — convenience copy at the run root.
-- `<run_dir>/final_model{,_with_test}.config.yaml` — copy of the **pristine** YAML config (yacs-reloadable on another server).
-- `<run_dir>/final_model{,_with_test}.json` — manifest: per-seed test metrics, median, chosen seed, `best_epoch`, `best_f1_threshold` (read from the chosen seed's `plots/summary.json` if present), retrain budget, `train_mode`, `included_test_in_training: bool`, paths.
+- `<run_dir>/final{,_with_test}/<config_name>/<chosen_seed>/ckpt/<final_epoch>.ckpt` — the retrained model (where main.py writes it; the three `final_model.*` files below are convenience copies sitting at the run root).
 
-These three `final_model{,_with_test}.*` files form a **self-contained deployment bundle** — copy the trio to any other server and feed them to `scripts/predict.py` (see [Step 7 — Predict on new data](#step-7--predict-on-new-data)).
+The three `final_model{,_with_test}.*` files at the run root form a **self-contained deployment bundle**. Copy the trio to any other server and feed them to `scripts/predict.py` (see [Step 7 — Predict on new data](#step-7--predict-on-new-data)). Each file has a distinct purpose:
+
+| File | What it is | Why all three are needed |
+|---|---|---|
+| `final_model{,_with_test}.ckpt` | Model weights (the learned parameters from `torch.save`). | Loaded into the model via `load_state_dict()`. Without it, no inference. |
+| `final_model{,_with_test}.config.yaml` | Copy of the **pristine** YAML config from `configs/`. | Needed to **build the model architecture** (layer count, hidden dim, encoder stack, head type, …) *before* weights can be loaded. The auto-dumped `<run_dir>/config.yaml` cannot be reused — yacs strict-mode rejects its runtime-set keys (`run_dir`, `params`, `run_id`). |
+| `final_model{,_with_test}.json` | Manifest. | Records (a) **provenance** — per-seed test metrics, median, chosen seed, `best_epoch`, retrain budget, `train_mode`, `included_test_in_training` — so the selection rationale is auditable later; (b) `best_f1_threshold` (read from the chosen seed's `plots/summary.json` if present) so `predict.py --threshold optimal-f1` works on a deployment server *without* shipping the seed's `plots/` directory. |
 
 Worth the extra run only if you have a definite deployment target. For reporting / handoff, the median-seed checkpoint from the original dgt run is sufficient — the retrain is an optional "use all the labels for the final model" step.
 
@@ -275,6 +278,8 @@ python scripts/predict.py \
 ## Hyperparameter exploration
 
 For **reproducing the paper on benchmark datasets** (BBBP, QM9, etc.), the per-dataset settings in [tech.md → Per-dataset DGT hyperparameters](tech.md#per-dataset-dgt-hyperparameters) already match what the authors landed on — usually no sweep needed.
+
+> **Looking up what a YAML field means** (rather than which to tune): see [config_reference.md](config_reference.md) — line-by-line annotation of `BBBP-DGT-Pipeline.yaml` and `FreeSolv-DGT-Pipeline.yaml`, merged into one reference.
 
 For **your own data** (e.g. biodegradability in Phases 3+), a small grid over the highest-impact knobs is usually worthwhile because the right values depend on dataset size and class imbalance, which neither you nor the paper knows in advance. The table below groups parameters by typical impact on test performance; tune from the top down.
 

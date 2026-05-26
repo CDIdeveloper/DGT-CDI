@@ -325,6 +325,9 @@ SMILES ── RDKit ──▶ x, edge_index, edge_attr, pos
 - **Pretraining / fine-tuning hooks**: [graphgps/finetuning.py](../graphgps/finetuning.py) (`load_pretrained_model_cfg`, `init_model_from_pretrained`) — used for DGT(3D) PCQM4Mv2 → QM9 transfer.
 
 ## Per-dataset DGT hyperparameters (Supplementary Table 4)
+
+> For what each YAML field controls (line-by-line annotation of two worked examples), see [config_reference.md](config_reference.md).
+
 | Dataset | Batch | Layers | Heads | Hidden | LR | RW steps | Max SPD | Max ring |
 |---|---|---|---|---|---|---|---|---|
 | BBBP | 32 | 6 | 32 | 128 | 4e-4 | 16 | 8 | 18 |
