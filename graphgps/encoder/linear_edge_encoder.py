@@ -15,6 +15,10 @@ class LinearEdgeEncoder(torch.nn.Module):
             self.in_dim = cfg.dataset.edge_encoder_num_types
         elif cfg.dataset.format == 'PyG-Chiral3DMoleculeNet':
             self.in_dim = cfg.dataset.edge_encoder_num_types
+        elif cfg.dataset.format == 'PyG-biodeg_gwu':
+            # biodeg_gwu uses MoleculeNet-identical edge featurisation
+            # (3 categorical bond features: bond_type, stereo, is_conjugated).
+            self.in_dim = cfg.dataset.edge_encoder_num_types
         elif cfg.dataset.format == 'OGB':
             self.in_dim = cfg.dataset.edge_encoder_num_types
         else:
