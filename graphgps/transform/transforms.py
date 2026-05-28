@@ -184,6 +184,7 @@ def get_rings(edge_index, max_k=7):
     Rings are returned as a list of the indices of all the nodes in the ring.
     '''
     import graph_tool as gt
+    import graph_tool.stats  # required for gt.stats.remove_self_loops etc. — not auto-imported on conda-forge builds
     import graph_tool.topology as top
     import networkx as nx
 
