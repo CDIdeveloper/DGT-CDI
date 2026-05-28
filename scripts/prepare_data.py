@@ -141,28 +141,40 @@ def main():
     if not tl_path.is_dir():
         raise FileNotFoundError(f"--trans-learn-path not found: {tl_path}")
 
-    # Two trans_learn layouts in the wild:
-    #   (A) tl_path is the *repo root* and contains a nested `trans_learn/`
-    #       package dir → add tl_path itself to sys.path.
-    #   (B) tl_path IS the package dir (it has its own __init__.py) → add
-    #       the parent of tl_path to sys.path.
-    # Auto-detect; fall back to inserting both so either layout works.
-    has_nested_pkg = (tl_path / 'trans_learn' / '__init__.py').is_file()
-    is_pkg_itself = (tl_path / '__init__.py').is_file()
-    sys_path_to_add = []
-    if has_nested_pkg:
-        sys_path_to_add.append(tl_path)            # Layout A
-    if is_pkg_itself:
-        sys_path_to_add.append(tl_path.parent)     # Layout B
-    if not sys_path_to_add:
-        # Neither layout marker found — try both anyway as a last resort.
-        sys_path_to_add = [tl_path, tl_path.parent]
-    for p in sys_path_to_add:
-        sp = str(p)
-        if sp not in sys.path:
-            sys.path.insert(0, sp)
-
+    # We need to add the directory that *contains* the `trans_learn/` package
+    # to sys.path. Detect by looking for `trans_learn/settings.py` (the file
+    # we'll actually import) rather than `__init__.py` — Python 3.3+ namespace
+    # packages don't require __init__.py, so its absence isn't a reliable
+    # signal. Covers three layouts: src-layout (most common), repo-root
+    # containing the package, and tl_path being the package itself.
+    candidates = (
+        tl_path / 'src',   # src layout (pyproject.toml-style)
+        tl_path,           # repo root contains a `trans_learn/` package
+        tl_path.parent,    # tl_path itself IS the `trans_learn/` package dir
+    )
+    tl_root = None
+    for c in candidates:
+        if (c / 'trans_learn' / 'settings.py').is_file():
+            tl_root = c
+            break
+    if tl_root is None:
+        found = [str(p) for p in tl_path.rglob('settings.py')][:5]
+        raise FileNotFoundError(
+            f"Could not locate 'trans_learn/settings.py' relative to "
+            f"--trans-learn-path={tl_path}."
+            f"\nTried (looking for <candidate>/trans_learn/settings.py):"
+            + "".join(f"\n  - {c}" for c in candidates)
+            + ((f"\nFound 'settings.py' files under {tl_path} (up to 5):"
+                + "".join(f"\n  - {f}" for f in found))
+               if found else
+               f"\nNo 'settings.py' found anywhere under {tl_path}.")
+            + "\nPass --trans-learn-path pointing at the directory whose "
+              "child 'trans_learn/' (or 'src/trans_learn/') contains "
+              "settings.py."
+        )
+    sys.path.insert(0, str(tl_root))
     sys.path.insert(0, str(REPO_ROOT / 'tests' / 'data_loading'))
+
     try:
         from load_data import DatasetLoader  # noqa: E402
     except Exception as e:
@@ -173,11 +185,8 @@ def main():
             " (python-dotenv, boto3, pandas, pyarrow)."
             "\n  (2) trans_learn's .env not discoverable from CWD"
             " (find_dotenv() looks upward from CWD)."
-            f"\n  (3) --trans-learn-path layout not recognised: {tl_path}"
-            f" (tried: {[str(p) for p in sys_path_to_add]})"
-            "\n      Expected one of:"
-            "\n        - <path>/trans_learn/__init__.py  (path = repo root)"
-            "\n        - <path>/__init__.py              (path IS the package dir)"
+            f"\n  (3) Other import-time error inside trans_learn (sys.path "
+            f"entry resolved to: {tl_root})"
             f"\nUnderlying error: {e}"
         ) from e
 
