@@ -156,14 +156,21 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
   - [X] Writes the result locally to `datasets/<name>/raw/{train,test}.parquet`. Each parquet keeps the trans_learn layout: first `id_column_count` columns hold SMILES + identifiers + target `y`; remaining columns are descriptors.
   - [X] Also writes `datasets/<name>/raw/manifest.json` carrying `{id_column_count, id_columns, target_column, smiles_column, descriptor_columns, desc_dim, n_train, n_test, task_type_hint}` — so the PyG loader doesn't need to import trans_learn at runtime.
   - [X] Idempotent — re-running overwrites the local snapshot from S3.
-- [ ] Run the prepare script for `biodeg_gwu` on the remote and confirm the three output files appear under `datasets/biodeg_gwu/raw/`. Decide `.gitignore` policy after seeing the parquet sizes (most likely **exclude** them — the prepare script is the canonical fetcher).
-- [ ] Implement `graphgps/loader/dataset/biodeg_gwu.py` as a PyG `InMemoryDataset` (pattern: [chiral3d_molecule_net.py](../graphgps/loader/dataset/chiral3d_molecule_net.py) / [aqsol_molecules.py](../graphgps/loader/dataset/aqsol_molecules.py)). Reads `datasets/biodeg_gwu/raw/{train,test}.parquet` + `manifest.json`; caches featurised graphs in `datasets/biodeg_gwu/processed/`. **No trans_learn import** — the loader stays self-contained.
-  - [ ] Per molecule: SMILES → RDKit `Mol` → atom/bond features (reuse OGB / MoleculeNet featurisation), `data.y` ∈ {0, 1}, `data.desc` = descriptor vector stored as shape `[1, desc_dim]` (graph-level attribute, so PyG collation stacks it to `[B, desc_dim]`). **No normalisation here** — descriptors are stored as-loaded; Phase 2 standardises them.
-  - [ ] Split each parquet's columns into SMILES/identifiers/y vs descriptors using `id_column_count` from the manifest.
-  - [ ] Set `train_graph_index` / `val_graph_index` / `test_graph_index` on `dataset.data` — lists of indices, the graph-level split convention (`*_mask` is the node-level convention and does not apply here). Train/test split is inherited from the prepare step (which parquet each row came from); ~10 % of train is carved out as validation with a fixed seed for reproducibility.
-  - [ ] Drop unparseable SMILES with a logged warning (don't silently skip).
-- [ ] Register a `PyG-BiodegGwu` format in [graphgps/loader/master_loader.py](../graphgps/loader/master_loader.py). **No change to [graphgps/loader/split_generator.py](../graphgps/loader/split_generator.py) is needed** — the existing `split_mode: standard` already consumes pre-set `*_graph_index` attributes for graph-level tasks ([split_generator.py:68-74](../graphgps/loader/split_generator.py#L68)).
-- [ ] **Verify (manual smoke test, same pattern as Phase 0 — no pytest scaffolding):** run a 3-epoch dry-run config; check exit code 0, the loader returns 3 DataLoaders, `batch.desc` is present + finite, label distribution printed in the log, no NaN losses.
+- [X] Run the prepare script for `biodeg_gwu` on the remote and confirm the three output files appear under `datasets/biodeg_gwu/raw/`. **Result:** 5742 train + 300 test rows, 247 descriptors, binary classification target. `.gitignore` policy: **exclude** `datasets/biodeg_gwu/raw/` (the existing `.gitignore` rule covers it).
+- [X] Implement `graphgps/loader/dataset/biodeg_gwu.py` as a PyG `InMemoryDataset` (pattern: [chiral3d_molecule_net.py](../graphgps/loader/dataset/chiral3d_molecule_net.py) / [aqsol_molecules.py](../graphgps/loader/dataset/aqsol_molecules.py)). Reads `datasets/biodeg_gwu/raw/{train,test}.parquet` + `manifest.json`; caches featurised graphs in `datasets/biodeg_gwu/processed/`. **No trans_learn import** — the loader stays self-contained.
+  - [X] Per molecule: SMILES → RDKit `Mol` → atom/bond features (reuse OGB / MoleculeNet featurisation), `data.y` ∈ {0, 1}, `data.desc` = descriptor vector stored as shape `[1, desc_dim]` (graph-level attribute, so PyG collation stacks it to `[B, desc_dim]`). **No normalisation here** — descriptors are stored as-loaded; Phase 2 standardises them.
+  - [X] Split each parquet's columns into SMILES/identifiers/y vs descriptors using `id_column_count` from the manifest.
+  - [X] Set `train_graph_index` / `val_graph_index` / `test_graph_index` on `dataset.data` — lists of indices, the graph-level split convention (`*_mask` is the node-level convention and does not apply here). Train/test split is inherited from the prepare step (which parquet each row came from); ~10 % of train is carved out as validation with a fixed seed for reproducibility.
+  - [X] Drop unparseable SMILES with a logged warning (don't silently skip). **Result:** zero rows dropped on first run.
+- [X] Register a `PyG-biodeg_gwu` format in [graphgps/loader/master_loader.py](../graphgps/loader/master_loader.py). **No change to [graphgps/loader/split_generator.py](../graphgps/loader/split_generator.py) is needed** — the existing `split_mode: standard` already consumes pre-set `*_graph_index` attributes for graph-level tasks ([split_generator.py:68-74](../graphgps/loader/split_generator.py#L68)).
+- [X] **Dataset-level smoke test** — load via `BiodegGwu('datasets/biodeg_gwu')` and inspect splits + class balance. **Result:** train n=5168 (43.1% pos), val n=574 (41.8% pos), test n=300 (48.0% pos), desc_dim=247.
+- [ ] **End-to-end smoke test** — baseline config [configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml) is in place (mirrors `BBBP-DGT-Pipeline.yaml`; `gnn.head: line_graph` — no descriptor fusion yet, that's Phase 2). Run a 3-epoch dry-run:
+  ```bash
+  python main.py \
+    --cfg configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml \
+    --repeat 1 seed 0 wandb.use False optim.max_epoch 3
+  ```
+  Check: exit code 0; train/val/test loaders return data; `batch.desc` is present + finite (even though the head ignores it for now); train_loss ↓ across epochs; no NaN losses; per-seed dir populated with `train/`, `val/`, `test/` stats + a single best-val ckpt.
 - [ ] **After `biodeg_gwu` works end-to-end:** repeat the same steps for the `biodeg` (no-Reaxys) dataset — `python scripts/prepare_data.py --dataset biodeg ...`, add `graphgps/loader/dataset/biodeg.py` (clone of biodeg_gwu loader), register `PyG-Biodeg` format. No new architectural work.
 
 ## Phase 2 — Descriptor plumbing (late fusion)
@@ -175,14 +182,16 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 - [ ] **Verify:** `pytest tests/test_descriptor_head.py` passes; the ablation switch (`gnn.head: line_graph` vs `line_graph_with_desc`) toggles cleanly; `pytest -m e2e` still green.
 
 ## Phase 3 — Config & first training run
+
+> **Baseline already exists.** [configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml) (created in Phase 1's end-to-end smoke test) is the *no-descriptor* baseline. Phase 3 adds the *with-descriptor* variant alongside it.
+
 - [ ] Register the new `dataset.desc_dim` config field in [graphgps/config/dataset_config.py](../graphgps/config/dataset_config.py) — GraphGym rejects unknown YAML keys, so the field must exist in the schema before a config can reference it.
-- [ ] Create `configs/biodegradability/Biodeg-RWSE-SPDE-Rings.yaml`, modelled on [BBBP-RWSE-SPDE-Rings.yaml](../configs/physiology/BBBP-RWSE-SPDE-Rings.yaml):
-  - [ ] `dataset.format: PyG-Biodegradability`, `task_type: classification_binary`, `split_mode: standard`.
-  - [ ] `gnn.head: line_graph_with_desc`, set `dataset.desc_dim` to the descriptor count.
-  - [ ] Hyperparameters initially mirrored from BBBP (similar size, similar task); revisit after first run.
-  - [ ] Loss: `cross_entropy`. If the train set is materially imbalanced (>~70/30), switch to `weighted_cross_entropy` or `focal_loss` (both already in [graphgps/loss/](../graphgps/loss/)).
-- [ ] Add `tests/test_config.py` — assert the new `Biodeg-RWSE-SPDE-Rings.yaml` loads without error and that `dataset.desc_dim` is a recognised config key.
-- [ ] Run `python main.py --cfg configs/biodegradability/Biodeg-RWSE-SPDE-Rings.yaml --repeat 4 seed 0`.
+- [ ] Create `configs/biodegradability/Biodeg-GWU-DGT-Pipeline-WithDesc.yaml`, a copy of the Phase 1 baseline with two changes:
+  - [ ] `gnn.head: line_graph_with_desc` (was: `line_graph`).
+  - [ ] `dataset.desc_dim: 247` (the value from `datasets/biodeg_gwu/raw/manifest.json`).
+  - [ ] Loss: keep `cross_entropy` — Phase 1 confirmed ~43% positive across splits, well-balanced. (If a later dataset comes in materially imbalanced (>~70/30), switch to `weighted_cross_entropy` or `focal_loss`, both already in [graphgps/loss/](../graphgps/loss/).)
+- [ ] Add `tests/test_config.py` — assert the new `Biodeg-GWU-DGT-Pipeline-WithDesc.yaml` loads without error and that `dataset.desc_dim` is a recognised config key.
+- [ ] Run `python main.py --cfg configs/biodegradability/Biodeg-GWU-DGT-Pipeline-WithDesc.yaml --repeat 4 seed 0`.
 - [ ] **Verify:** `pytest tests/test_config.py` passes; val ROC-AUC > random; test ROC-AUC is logged; no NaN losses; W&B run visible; `pytest -m e2e` still green.
 
 ## Phase 4 — Ablation: does the descriptor channel help?
@@ -192,7 +201,7 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 - [ ] Add a descriptors-only baseline — a small standalone MLP on the descriptor vector (a separate script / model, **not** a `gnn.head` toggle of `DGTModel`) — as a quick sanity check that the descriptors carry signal on their own.
 - [ ] For every variant × seed, run [scripts/analyze_run.py](../scripts/analyze_run.py) to generate ROC / PR / confusion-matrix plots + a `summary.json` with the scalar metrics:
   ```bash
-  for cfg in Biodeg-DGT-Pipeline Biodeg-DGT-Pipeline-WithDesc; do
+  for cfg in Biodeg-GWU-DGT-Pipeline Biodeg-GWU-DGT-Pipeline-WithDesc; do
     for s in 0 1 2 3; do
       python scripts/analyze_run.py results/DGT/$cfg/$s
     done
@@ -232,5 +241,5 @@ Note: this is **not** the paper's pretraining recipe. The paper's `### Pretraini
 
 ## Open items / assumptions to confirm later
 - [ ] Exact descriptor list and dimensionality (currently treated as a black-box vector of length `desc_dim`). Phase 1's manifest will fix `desc_dim` once the prepare script runs against the live `biodeg` data.
-- [ ] Class balance of the RD/NRD labels — drives the loss choice in Phase 3. Phase 1's prepare script should log the train-set label distribution as a side-effect.
+- [X] ~~Class balance of the RD/NRD labels — drives the loss choice in Phase 3.~~ **Resolved 2026-05-28 from biodeg_gwu Phase 1 smoke test: ~43% positive across all splits → plain `cross_entropy` is correct for Phase 3 (no weighted / focal loss needed).**
 
