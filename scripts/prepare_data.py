@@ -140,7 +140,28 @@ def main():
     tl_path = args.trans_learn_path.resolve()
     if not tl_path.is_dir():
         raise FileNotFoundError(f"--trans-learn-path not found: {tl_path}")
-    sys.path.insert(0, str(tl_path))
+
+    # Two trans_learn layouts in the wild:
+    #   (A) tl_path is the *repo root* and contains a nested `trans_learn/`
+    #       package dir → add tl_path itself to sys.path.
+    #   (B) tl_path IS the package dir (it has its own __init__.py) → add
+    #       the parent of tl_path to sys.path.
+    # Auto-detect; fall back to inserting both so either layout works.
+    has_nested_pkg = (tl_path / 'trans_learn' / '__init__.py').is_file()
+    is_pkg_itself = (tl_path / '__init__.py').is_file()
+    sys_path_to_add = []
+    if has_nested_pkg:
+        sys_path_to_add.append(tl_path)            # Layout A
+    if is_pkg_itself:
+        sys_path_to_add.append(tl_path.parent)     # Layout B
+    if not sys_path_to_add:
+        # Neither layout marker found — try both anyway as a last resort.
+        sys_path_to_add = [tl_path, tl_path.parent]
+    for p in sys_path_to_add:
+        sp = str(p)
+        if sp not in sys.path:
+            sys.path.insert(0, sp)
+
     sys.path.insert(0, str(REPO_ROOT / 'tests' / 'data_loading'))
     try:
         from load_data import DatasetLoader  # noqa: E402
@@ -151,8 +172,12 @@ def main():
             "\n  (1) trans_learn deps missing in this Python env"
             " (python-dotenv, boto3, pandas, pyarrow)."
             "\n  (2) trans_learn's .env not discoverable from CWD"
-            " (find_dotenv() looks upward)."
-            f"\n  (3) --trans-learn-path is wrong: {tl_path}"
+            " (find_dotenv() looks upward from CWD)."
+            f"\n  (3) --trans-learn-path layout not recognised: {tl_path}"
+            f" (tried: {[str(p) for p in sys_path_to_add]})"
+            "\n      Expected one of:"
+            "\n        - <path>/trans_learn/__init__.py  (path = repo root)"
+            "\n        - <path>/__init__.py              (path IS the package dir)"
             f"\nUnderlying error: {e}"
         ) from e
 
