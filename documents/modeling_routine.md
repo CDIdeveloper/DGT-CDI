@@ -291,19 +291,19 @@ This writes the three-file deployment bundle (`final_model{,_with_test}.{ckpt,co
 
 Add one row to the Final models table with these values:
 
+All five test metrics come from the same file — `results/DGT/<winning_config>/agg/test/best.json` — written by `agg_runs()` at the end of the ORIGINAL 4-seed run (NOT the retrain; the retrain has no held-out test of its own). Values are at the default 0.5 threshold; for the per-deployment optimal threshold see the "Optimal F1 threshold" column.
+
 | Column | Where to read it from |
 |---|---|
 | **Model name** | Your choice, e.g. `biodeg-gwu-2026-05-29` or `biodeg-gwu-v1`. Use it consistently in the cloud bundle URI. |
 | **Dataset** | e.g. `biodeg_gwu` |
 | **Winning config** | Link to the YAML, e.g. `configs/biodegradability/Biodeg-GWU-DGT-Pipeline-L6.yaml` |
 | **Retrain mode** | `dgt_retrain` (default) or `dgt_retrain_with_test` (if `--include-test`) — also in `final_model.json` → `train_mode`. |
-| **Test AUC (4-seed mean ± std)** | `cat results/DGT/<winning_config>/agg/test/best.json` → `auc_mean ± auc_std`. **From the ORIGINAL 4-seed run**, not the retrain (the retrain has no held-out test of its own). |
-| **Test AUPRC** | Same agg file, `auprc_mean` (or average per-seed `summary.json` `average_precision`). |
-| **Test F1** | Per-seed `plots/summary.json` → `best_f1`; average the four. |
-| **Test accuracy** | Per-seed `plots/summary.json` → confusion matrix at optimal threshold; compute `(TP + TN) / total`. |
+| **Test Accuracy / Precision / Recall / F1** | `cat results/DGT/<winning_config>/agg/test/best.json` → `accuracy`, `precision`, `recall`, `f1`. Just the mean (each has a paired `_std` field but the headline std is carried on AUROC alone). |
+| **Test AUROC (mean ± std)** | Same agg file → `auc` and `auc_std`. Format as `0.xxxx ± 0.xxxx`. |
 | **Optimal F1 threshold** | `cat results/DGT/<winning_config>/final_model{,_with_test}.json` → `best_f1_threshold`. Read by `scripts/predict.py --threshold optimal-f1`. |
-| **Best-val epoch** | Same JSON → `best_epoch_on_original_val_split`. |
-| **Cloud bundle URI** | The S3 (or other) URI prefix where you upload the three bundle files (see step 3 below). |
+| **Best-val epoch** | Same `final_model.json` → `best_epoch_on_original_val_split`. (Also visible in the agg file as `epoch`.) |
+| **Cloud bundle URI** | The S3 (or other) URI prefix where you upload the three bundle files (see sub-step 4 below). |
 | **Git SHA** | `git rev-parse --short HEAD` at the time of the retrain. |
 | **Date** | YYYY-MM-DD of the retrain. |
 

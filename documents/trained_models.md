@@ -11,7 +11,7 @@ One table per `(dataset, round)`. Each row is one variant; the **baseline** row 
 | Variant | Config | Change vs baseline | Test AUC (mean ± std, 4 seeds) | Test F1 (mean) | Test accuracy (mean) | Best-val epoch (median) | Δ Test AUC vs baseline | Notes |
 |---|---|---|---|---|---|---|---|---|
 | baseline | [Biodeg-GWU-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml) | — | 0.8821 ± 0.0034 | 0.7836 | 0.7950 | 31 | 0 | run date 2026-05-28; git SHA `<fill>` |
-| L6 | [Biodeg-GWU-DGT-Pipeline-L6.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline-L6.yaml) | `gt.layers: 4 → 6` | <fill> | <fill> | <fill> | <fill> | <fill> | matches paper's BBBP recipe |
+| L6 | [Biodeg-GWU-DGT-Pipeline-L6.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline-L6.yaml) | `gt.layers: 4 → 6` | 0.8755 ± 0.0079 | 0.7821 | 0.7933 | 27 | -0.0066 | regression; std 2.3× baseline. Extra depth does not help on biodeg_gwu. |
 | dim256 | [Biodeg-GWU-DGT-Pipeline-dim256.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline-dim256.yaml) | `gt.dim_hidden / gnn.dim_inner: 128 → 256` | <fill> | <fill> | <fill> | <fill> | <fill> | wider model |
 | lr1e3 | [Biodeg-GWU-DGT-Pipeline-lr1e3.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline-lr1e3.yaml) | `optim.base_lr: 4e-4 → 1e-3` | <fill> | <fill> | <fill> | <fill> | <fill> | aggressive LR |
 
@@ -21,8 +21,10 @@ All values readable directly from `results/DGT/<config_name>/agg/test/best.json`
 
 One row per deployment-ready model — the output of running `scripts/retrain_on_trainval.py` on an HPO winner. Test metrics carry over from the **original 4-seed dgt-mode run** of the same config (the retrain has no held-out test estimate of its own; the original aggregate is the closest unbiased proxy — see [modeling_routine.md Step 5 → "Two senses of 'test data is used'"](modeling_routine.md#two-senses-of-test-data-is-used)).
 
-| Model name | Dataset | Winning config | Retrain mode | Test AUC (4-seed mean ± std) | Test AUPRC | Test F1 (at optimal threshold) | Test accuracy | Optimal F1 threshold | Best-val epoch | Cloud bundle URI | Git SHA | Date |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| _(none yet)_ | | | | | | | | | | | | |
+All five test metrics below are the **4-seed mean** from `agg/test/best.json` (default 0.5 threshold). The optimal-F1 threshold is recorded separately for deployment-time use — apply it via `predict.py --threshold optimal-f1` or by re-thresholding the raw scores.
+
+| Model name | Dataset | Winning config | Retrain mode | Test Accuracy | Test Precision | Test Recall | Test F1 | Test AUROC (mean ± std) | Optimal F1 threshold | Best-val epoch | Cloud bundle URI | Git SHA | Date |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| _(none yet)_ | | | | | | | | | | | | | |
 
 How to fill this table + upload the bundle to cloud → [modeling_routine.md → Step 7](modeling_routine.md#step-7--retrain-winning-config-record-final-model-ship-deployment-bundle).

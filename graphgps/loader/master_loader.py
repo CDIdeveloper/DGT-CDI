@@ -15,6 +15,7 @@ from torch_geometric.graphgym.loader import load_pyg, load_ogb, set_dataset_attr
 from torch_geometric.graphgym.register import register_loader
 
 from graphgps.loader.dataset.aqsol_molecules import AQSOL
+from graphgps.loader.dataset.biodeg import Biodeg
 from graphgps.loader.dataset.biodeg_gwu import BiodegGwu
 from graphgps.loader.dataset.chiral3d_molecule_net import Chiral3DMoleculeNet
 from graphgps.loader.dataset.coco_superpixels import COCOSuperpixels
@@ -150,6 +151,9 @@ def load_dataset_master(format, name, dataset_dir):
 
         elif pyg_dataset_id == 'biodeg_gwu':
             dataset = preformat_BiodegGwu(dataset_dir, name)
+
+        elif pyg_dataset_id == 'biodeg':
+            dataset = preformat_Biodeg(dataset_dir, name)
 
         else:
             raise ValueError(f"Unexpected PyG Dataset identifier: {format}")
@@ -624,6 +628,27 @@ def preformat_BiodegGwu(dataset_dir, name):
     )
     # ChIRo pattern: each Data carries a `split` tag; convert to the
     # graph-level index lists that split_mode='standard' consumes.
+    train_graph_index = [i for i, d in enumerate(dataset) if d.split == 'train']
+    val_graph_index = [i for i, d in enumerate(dataset) if d.split == 'val']
+    test_graph_index = [i for i, d in enumerate(dataset) if d.split == 'test']
+    dataset.split_idxs = [train_graph_index, val_graph_index, test_graph_index]
+    return dataset
+
+
+def preformat_Biodeg(dataset_dir, name):
+    """Load the biodeg dataset (biodegradability, no-Reaxys variant).
+
+    Sibling of `preformat_BiodegGwu` — same shape, different source data.
+    See [graphgps/loader/dataset/biodeg.py](biodeg.py) for the
+    featurisation + split conventions.
+
+    `name` is accepted for the master_loader signature but not used.
+    """
+    del name  # unused; single-subset dataset
+    dataset = Biodeg(
+        dataset_dir,
+        transform=partial(typecast_x_and_edge_attr, type_str='float'),
+    )
     train_graph_index = [i for i, d in enumerate(dataset) if d.split == 'train']
     val_graph_index = [i for i, d in enumerate(dataset) if d.split == 'val']
     test_graph_index = [i for i, d in enumerate(dataset) if d.split == 'test']
