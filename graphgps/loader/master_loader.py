@@ -15,6 +15,7 @@ from torch_geometric.graphgym.loader import load_pyg, load_ogb, set_dataset_attr
 from torch_geometric.graphgym.register import register_loader
 
 from graphgps.loader.dataset.aqsol_molecules import AQSOL
+from graphgps.loader.dataset.biodeg_gwu import BiodegGwu
 from graphgps.loader.dataset.chiral3d_molecule_net import Chiral3DMoleculeNet
 from graphgps.loader.dataset.coco_superpixels import COCOSuperpixels
 from graphgps.loader.dataset.malnet_tiny import MalNetTiny
@@ -146,6 +147,9 @@ def load_dataset_master(format, name, dataset_dir):
             
         elif pyg_dataset_id == 'AQSOL':
             dataset = preformat_AQSOL(dataset_dir, name)
+
+        elif pyg_dataset_id == 'biodeg_gwu':
+            dataset = preformat_BiodegGwu(dataset_dir, name)
 
         else:
             raise ValueError(f"Unexpected PyG Dataset identifier: {format}")
@@ -597,6 +601,32 @@ def preformat_QM9(dataset_dir, name):
     train_graph_index = [int(l.strip()) for l in open(os.path.join(dataset_dir, 'raw/train_graph_index.txt')).readlines()]
     val_graph_index = [int(l.strip()) for l in open(os.path.join(dataset_dir, 'raw/val_graph_index.txt')).readlines()]
     test_graph_index = [int(l.strip()) for l in open(os.path.join(dataset_dir, 'raw/test_graph_index.txt')).readlines()]
+    dataset.split_idxs = [train_graph_index, val_graph_index, test_graph_index]
+    return dataset
+
+
+def preformat_BiodegGwu(dataset_dir, name):
+    """Load the biodeg_gwu dataset (biodegradability, GWU batch 2).
+
+    The dataset is prepared offline by `scripts/prepare_data.py` from
+    trans_learn's DATASET_REGISTRY; the loader reads the local snapshot
+    (parquets + manifest) under `dataset_dir/raw/`. See
+    [graphgps/loader/dataset/biodeg_gwu.py](biodeg_gwu.py) for the
+    featurisation + split conventions.
+
+    `name` is accepted for the master_loader signature but not used —
+    biodeg_gwu has only one subset (no name variants).
+    """
+    del name  # unused; single-subset dataset
+    dataset = BiodegGwu(
+        dataset_dir,
+        transform=partial(typecast_x_and_edge_attr, type_str='float'),
+    )
+    # ChIRo pattern: each Data carries a `split` tag; convert to the
+    # graph-level index lists that split_mode='standard' consumes.
+    train_graph_index = [i for i, d in enumerate(dataset) if d.split == 'train']
+    val_graph_index = [i for i, d in enumerate(dataset) if d.split == 'val']
+    test_graph_index = [i for i, d in enumerate(dataset) if d.split == 'test']
     dataset.split_idxs = [train_graph_index, val_graph_index, test_graph_index]
     return dataset
 
