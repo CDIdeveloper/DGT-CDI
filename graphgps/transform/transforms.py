@@ -184,7 +184,6 @@ def get_rings(edge_index, max_k=7):
     Rings are returned as a list of the indices of all the nodes in the ring.
     '''
     import graph_tool as gt
-    import graph_tool.stats  # required for gt.stats.remove_self_loops etc. — not auto-imported on conda-forge builds
     import graph_tool.topology as top
     import networkx as nx
 
@@ -194,8 +193,18 @@ def get_rings(edge_index, max_k=7):
     edge_list = edge_index.T
     graph_gt = gt.Graph(directed=False)
     graph_gt.add_edge_list(edge_list)
-    gt.stats.remove_self_loops(graph_gt)
-    gt.stats.remove_parallel_edges(graph_gt)
+    # `remove_self_loops` / `remove_parallel_edges` moved between graph_tool
+    # versions: older builds had them in `graph_tool.stats`, newer builds
+    # (incl. conda-forge graph_tool=2.45) moved them to `graph_tool.generation`.
+    # Try the modern location first, fall back to the older one.
+    try:
+        import graph_tool.generation as gt_gen
+        gt_gen.remove_self_loops(graph_gt)
+        gt_gen.remove_parallel_edges(graph_gt)
+    except (ImportError, AttributeError):
+        import graph_tool.stats as gt_stats
+        gt_stats.remove_self_loops(graph_gt)
+        gt_stats.remove_parallel_edges(graph_gt)
     # We represent rings with their original node ordering
     # so that we can easily read out the boundaries
     # The use of the `sorted_rings` set allows to discard
