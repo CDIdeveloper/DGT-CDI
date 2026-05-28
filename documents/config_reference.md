@@ -236,6 +236,12 @@ gnn:
   # Readout head. `line_graph`: pool atom and bond reps separately,
   # concat, then MLP → logits. Phase-2 `line_graph_with_desc` will
   # additionally concat molecular descriptors before the MLP (planned).
+  # **Note on naming:** the field lives under `gnn.*` for GraphGym
+  # historical reasons (the framework groups all model-side config there
+  # regardless of whether the architecture is actually an MPNN). It does
+  # NOT mean the head participates in graph message passing — it's
+  # purely the post-pooling readout MLP. Molecular descriptors enter
+  # the model **only** here, never through the GT layers or encoders.
 
   layers_pre_mp: 0
   # No pre-attention MPNN. The single MPNN step in DGT happens inside

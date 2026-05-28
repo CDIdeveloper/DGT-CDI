@@ -180,8 +180,14 @@ class BiodegGwu(InMemoryDataset):
         df_train = pd.read_parquet(osp.join(self.raw_dir, 'train.parquet'))
         df_test = pd.read_parquet(osp.join(self.raw_dir, 'test.parquet'))
 
-        # 2. Carve out validation from the prepared train parquet.
-        # Reproducible: same SPLIT_SEED → same indices across re-runs.
+        # ─────────────────────────────────────────────────────────────────
+        # SPLIT CONVENTION
+        #   train.parquet  →  90% train  +  10% val   (random, fixed seed)
+        #   test.parquet   →  100% test  (untouched — never mixed into the
+        #                                 val carve-out)
+        # The held-out test split on disk stays exactly the held-out test
+        # split used here. Only the train parquet is subdivided.
+        # ─────────────────────────────────────────────────────────────────
         rng = np.random.default_rng(self.SPLIT_SEED)
         n_train_full = len(df_train)
         perm = rng.permutation(n_train_full)
@@ -189,17 +195,23 @@ class BiodegGwu(InMemoryDataset):
         val_idx_set = set(perm[:n_val].tolist())
 
         # 3. Featurise each row.
+        # NB: pre-extracting NumPy arrays (not df.itertuples) — itertuples
+        # builds namedtuples whose field names must be valid Python identifiers,
+        # so columns like `COC(C)=O_fg` (SMILES-fragment functional-group flags)
+        # get renamed positionally and can no longer be looked up by their
+        # original name. Array indexing sidesteps this and is also faster.
         data_list = []
         dropped = {'train': 0, 'val': 0, 'test': 0}
         for split_source, df in (('train', df_train), ('test', df_test)):
-            iterator = tqdm(
-                df.itertuples(index=False),
-                total=len(df),
+            smiles_values = df[smiles_col].astype(str).to_numpy()
+            target_values = df[target_col].astype(float).to_numpy()
+            desc_array = df[descriptor_cols].astype(float).to_numpy()
+
+            for row_idx in tqdm(
+                range(len(df)),
                 desc=f"biodeg_gwu: featurising {split_source}",
-            )
-            for row_idx, row in enumerate(iterator):
-                row_dict = row._asdict()
-                smiles = row_dict[smiles_col]
+            ):
+                smiles = smiles_values[row_idx]
 
                 feats = _smiles_to_xy(smiles)
                 # Decide the split tag BEFORE skipping invalid rows, so the
@@ -219,11 +231,22 @@ class BiodegGwu(InMemoryDataset):
                 x, edge_index, edge_attr = feats
 
                 y = torch.tensor(
-                    [float(row_dict[target_col])], dtype=torch.float
+                    [float(target_values[row_idx])], dtype=torch.float
                 ).view(1, -1)
-                desc_values = [float(row_dict[c]) for c in descriptor_cols]
+
+                # ─────────────────────────────────────────────────────────
+                # MOLECULAR DESCRIPTORS ENTER HERE — and nowhere else.
+                # `desc` is a graph-level tensor of shape [1, desc_dim].
+                # PyG's mini-batch collation stacks it to [B, desc_dim] and
+                # carries it through the model untouched: encoders, DGT
+                # attention layers, and pairwise tensors (SPDE / RWSE / RSE)
+                # never see it. The Phase-2 `line_graph_with_desc` head is
+                # the only component that reads `batch.desc` — concatenating
+                # it with the pooled atom/bond embeddings at readout.
+                # See documents/overview.md Phase 2 for the design rationale.
+                # ─────────────────────────────────────────────────────────
                 desc = torch.tensor(
-                    desc_values, dtype=torch.float
+                    desc_array[row_idx], dtype=torch.float
                 ).view(1, -1)
                 assert desc.shape == (1, desc_dim), (
                     f"desc shape {desc.shape} != (1, {desc_dim}) — "
