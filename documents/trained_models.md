@@ -1,47 +1,28 @@
-# Trained models
+# Trained models for biodeg_gwu
 
-A registry of trained DGT models — what config produced them, where the checkpoint lives, and how they did on the held-out test set. Add one entry per model you want to keep / cite / deploy from.
+Two tables — **HPO sweeps** (one per dataset × round; used to pick a winning config) and **Final models** (deployment-ready models produced by retraining on the winner). For the workflow that produces these entries, see [modeling_routine.md → Step 6 / Step 7](modeling_routine.md#step-6--iterate-hpo-across-configs-if-exploring-hyperparameters).
 
-For the routine that produces these models, see [modeling_routine.md](modeling_routine.md).
+## HPO sweeps for models without molecular descriptor
 
-## Quick index
+One table per `(dataset, round)`. Each row is one variant; the **baseline** row sits at the top so every variant reads against a single reference. Each round changes one hyperparameter at a time from the current baseline (so a clear delta is attributable to that one change).
 
-| Date | Config | Dataset | Seed | Best-val | Test | Checkpoint |
-|---|---|---|---|---|---|---|
-| _(none yet — add rows as you train)_ |
+### biodeg_gwu — round 1
 
-## Entry template
+| Variant | Config | Change vs baseline | Test AUC (mean ± std, 4 seeds) | Test F1 (mean) | Test accuracy (mean) | Best-val epoch (median) | Δ Test AUC vs baseline | Notes |
+|---|---|---|---|---|---|---|---|---|
+| baseline | [Biodeg-GWU-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml) | — | 0.8821 ± 0.0034 | 0.7836 | 0.7950 | 31 | 0 | run date 2026-05-28; git SHA `<fill>` |
+| L6 | [Biodeg-GWU-DGT-Pipeline-L6.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline-L6.yaml) | `gt.layers: 4 → 6` | <fill> | <fill> | <fill> | <fill> | <fill> | matches paper's BBBP recipe |
+| dim256 | [Biodeg-GWU-DGT-Pipeline-dim256.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline-dim256.yaml) | `gt.dim_hidden / gnn.dim_inner: 128 → 256` | <fill> | <fill> | <fill> | <fill> | <fill> | wider model |
+| lr1e3 | [Biodeg-GWU-DGT-Pipeline-lr1e3.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline-lr1e3.yaml) | `optim.base_lr: 4e-4 → 1e-3` | <fill> | <fill> | <fill> | <fill> | <fill> | aggressive LR |
 
-Copy the block below for each new model, fill in the fields, and append under "Models" further down.
+All values readable directly from `results/DGT/<config_name>/agg/test/best.json` (no need to run `scripts/analyze_run.py` per seed for HPO comparison). Full fill-in commands + interpretation rule → [modeling_routine.md → Step 6](modeling_routine.md#step-6--iterate-hpo-across-configs-if-exploring-hyperparameters).
 
-```markdown
-### <model_name>  (yyyy-mm-dd)
+## Final model without molecular descriptor
 
-- **Config:** [<path/to/config.yaml>](../<path/to/config.yaml>)
-- **Dataset:** <name>, split: <scaffold / standard / ...>
-- **Train command:**
-  ```bash
-  python main.py --cfg <config> --repeat <N> seed 0 wandb.use False
-  ```
-- **Git SHA at train time:** `<short_sha>`  (`git rev-parse --short HEAD`)
-- **Seed(s) reported:** <0 / median over 0..3 / best of 4>
-- **Best epoch (by val):** <K>
-- **Validation metric:** <metric_best>=<value>
-- **Test metric:** <metric>=<value>  (full numbers in `<run_dir>/plots/summary.json`)
-- **Checkpoint:** `<run_dir>/ckpt/<K>.ckpt`
-- **Plots:** `<run_dir>/plots/`
-- **Notes:** <class imbalance / manual stopping / unusual losses / anything weird>
-```
+One row per deployment-ready model — the output of running `scripts/retrain_on_trainval.py` on an HPO winner. Test metrics carry over from the **original 4-seed dgt-mode run** of the same config (the retrain has no held-out test estimate of its own; the original aggregate is the closest unbiased proxy — see [modeling_routine.md Step 5 → "Two senses of 'test data is used'"](modeling_routine.md#two-senses-of-test-data-is-used)).
 
-## Models
+| Model name | Dataset | Winning config | Retrain mode | Test AUC (4-seed mean ± std) | Test AUPRC | Test F1 (at optimal threshold) | Test accuracy | Optimal F1 threshold | Best-val epoch | Cloud bundle URI | Git SHA | Date |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| _(none yet)_ | | | | | | | | | | | | |
 
-_(no entries yet)_
-
----
-
-## Conventions
-
-- **Granularity.** One entry per *seed* that you intend to keep around. For multi-seed runs you usually keep the seed whose test metric is closest to the aggregated mean (median test seed), but document whichever rule you used.
-- **Storage.** Checkpoints stay under `results/DGT/<config_name>/<seed>/ckpt/`. If you need to share or deploy one, copy it out to a stable location (e.g. `models/<model_name>.ckpt`) and update the entry's `Checkpoint:` field.
-- **Reproducibility.** Always record the git SHA at train time — config files, loader code, and `dgt_train.py` all evolve, and the same YAML can produce different results after a code change.
-- **Sunset old entries** when a better model on the same dataset supersedes them. Either delete the entry or move it to a `## Archive` section at the bottom of this file.
+How to fill this table + upload the bundle to cloud → [modeling_routine.md → Step 7](modeling_routine.md#step-7--retrain-winning-config-record-final-model-ship-deployment-bundle).

@@ -81,11 +81,30 @@ dataset:
   # sets). Don't change.
 
   split_mode: scaffold
-  # 80/10/10 split by Bemis-Murcko scaffold (chemprop-style). Tests
-  # generalisation to unseen scaffolds — typically 5-10 AUC points
-  # harder than random split, but a more realistic generalisation
-  # estimate. Alternatives: `standard` (consume pre-set
-  # *_graph_index attrs), `random`.
+  # Train/val/test split strategy. Four modes accepted by
+  # graphgps/loader/split_generator.py:
+  #
+  #   scaffold  → 80/10/10 split by Bemis-Murcko scaffold (chemprop-style).
+  #               Tests generalisation to unseen scaffolds — typically
+  #               5-10 AUC points harder than random split, but a more
+  #               realistic generalisation estimate. **MoleculeNet
+  #               (BBBP-DGT-Pipeline.yaml uses this) + Chiral3DMoleculeNet
+  #               for name='BACE'/'Tox21' only.**
+  #   standard  → Consume pre-set train/val/test_graph_index attrs that the
+  #               loader sets. **Most loaders use this** — including
+  #               biodeg_gwu, QM9, AQSOL, ZINC, peptides, OGB Graph,
+  #               Chiral3DMoleculeNet for name='ChIRo', VOC/COCO/Malnet.
+  #   random    → Random split using cfg.dataset.split ratios. Rarely used.
+  #   cv-kfold-K / cv-stratifiedkfold-K
+  #             → K-fold cross-validation; rotate folds via
+  #               cfg.dataset.split_index. Existing harness support; not
+  #               yet biodeg_gwu-aware (would mix train.parquet +
+  #               test.parquet — see Future work in overview.md).
+  #
+  # How to pick: open the relevant preformat_<X>() in master_loader.py.
+  # If it sets `dataset.split_idxs = [...]` → use `standard`. If not, and
+  # your data has SMILES → `scaffold`. See tech.md → Datasets, splits, and
+  # loaders for the full per-loader breakdown.
 
   node_encoder: True
   node_encoder_name: LinearNode

@@ -310,11 +310,32 @@ SMILES ── RDKit ──▶ x, edge_index, edge_attr, pos
 ```
 
 ## Datasets, splits, and loaders
-- Loader entry point: [graphgps/loader/master_loader.py](../graphgps/loader/master_loader.py), with dataset-specific modules in [graphgps/loader/dataset/](../graphgps/loader/dataset/) (`aqsol_molecules`, `chiral3d_molecule_net`, `voc_superpixels`, `coco_superpixels`, `malnet_tiny`).
+- Loader entry point: [graphgps/loader/master_loader.py](../graphgps/loader/master_loader.py). It dispatches on the YAML's `dataset.format` string to a `preformat_<X>(dataset_dir, name)` function (one per dataset family), then applies the shared pre-transform chain (RWSE → SPDE → rings → line-graph).
+- Per-dataset loader modules live in [graphgps/loader/dataset/](../graphgps/loader/dataset/). **Each one defines its own fetch + split protocol** — there is no single convention. Reference table:
+
+  | Loader file | `dataset.format` | Raw-data fetch | Split mechanism |
+  |---|---|---|---|
+  | (PyG built-in `MoleculeNet`) | `PyG-MoleculeNet` | Auto-download from PyG's S3 mirror on first `process()` | `dataset.split_mode: scaffold` → [split_generator.py](../graphgps/loader/split_generator.py) computes 80/10/10 Bemis-Murcko scaffold split at runtime |
+  | [chiral3d_molecule_net.py](../graphgps/loader/dataset/chiral3d_molecule_net.py) | `PyG-Chiral3DMoleculeNet` | Auto-download CSV + SDF | mixed: BACE / Tox21 use scaffold; ChIRo uses pre-tagged `data.split` strings → preformat sets `split_idxs` |
+  | [aqsol_molecules.py](../graphgps/loader/dataset/aqsol_molecules.py) | `PyG-AQSOL` | Auto-download zip of pre-split pickles | three pre-defined train / val / test pickle files; loader joins them |
+  | [peptides_functional.py](../graphgps/loader/dataset/peptides_functional.py), [peptides_structural.py](../graphgps/loader/dataset/peptides_structural.py) | `OGB peptides-*` | Auto-download parquet | OGB-style `get_idx_split()` |
+  | [voc_superpixels.py](../graphgps/loader/dataset/voc_superpixels.py), [coco_superpixels.py](../graphgps/loader/dataset/coco_superpixels.py), [malnet_tiny.py](../graphgps/loader/dataset/malnet_tiny.py) | `PyG-VOCSuperpixels` / `PyG-COCOSuperpixels` / `PyG-MalNetTiny` | Auto-download zip | pre-defined splits in the downloaded data |
+  | [biodeg_gwu.py](../graphgps/loader/dataset/biodeg_gwu.py) | `PyG-biodeg_gwu` | **Offline fetch** via [scripts/prepare_data.py](../scripts/prepare_data.py) → local `datasets/biodeg_gwu/raw/{train,test}.parquet` (no S3 at training time) | `dataset.split_mode: standard` → train.parquet 90/10 train+val (fixed seed); test.parquet maps 1:1 to test |
+  | (Other PyG built-ins: `PyG-QM9`, `PyG-ZINC`, `PyG-TUDataset`, `PyG-Planetoid`, `PyG-GNNBenchmarkDataset`) | various | Auto-download or local raw files | per `preformat_*` function in master_loader |
+
 - **MoleculeNet** datasets used by the paper: BBBP, Tox21, ClinTox, SIDER, BACE, HIV, ESOL, FreeSolv, Lipophilicity (PyG `MoleculeNet` interface).
 - **QM9** with explicit scaffold splits provided under [datasets/QM9_split/](../datasets/QM9_split/) (SMILES + split files to be copied into `datasets/QM9/raw`).
 - **Chiral3D MoleculeNet** for chirality-sensitive 3D tasks.
-- **Splitting**: scaffold split, 80/10/10, implemented after the chemprop scaffold-split reference; selected per-config via `dataset.split_mode: scaffold` and managed by [graphgps/loader/split_generator.py](../graphgps/loader/split_generator.py).
+- **Splitting** is selected via `dataset.split_mode` in the YAML; dispatched by `prepare_splits()` in [graphgps/loader/split_generator.py](../graphgps/loader/split_generator.py). Four modes:
+
+  | `split_mode` | What it does | Which loaders need it |
+  |---|---|---|
+  | `standard` | Consume pre-set `train/val/test_graph_index` attrs on `dataset.data`. | **Most loaders** (any `preformat_*` that sets `dataset.split_idxs = [...]`): `Chiral3DMoleculeNet` (only for `name='ChIRo'`), `QM9`, `AQSOL`, `VOC/COCOSuperpixels`, `MalNetTiny`, `GNNBenchmarkDataset`, `ZINC`, OGB Graph (`PygGraphPropPredDataset`), Peptides, `PCQM4Mv2Contact`, **`biodeg_gwu`**. |
+  | `scaffold` | Compute 80/10/10 Bemis-Murcko scaffold split at runtime (needs `dataset.data.smiles`). | `MoleculeNet` (BBBP, Tox21, ClinTox, SIDER, BACE, HIV, ESOL, FreeSolv, Lipo); `Chiral3DMoleculeNet` (for `name='BACE'` or `'Tox21'`). |
+  | `random` | Random train/val/test using `cfg.dataset.split` ratios. | Any dataset (rarely chosen in shipped configs). |
+  | `cv-kfold-K` / `cv-stratifiedkfold-K` | K-fold cross-validation; rotate via `cfg.dataset.split_index`. Cached to disk under `cfg.dataset.split_dir`. | Any dataset. **Caveat**: `setup_cv_split` folds across the *entire* dataset, ignoring any held-out split the loader pre-set — so for `biodeg_gwu` (separate `test.parquet`), the existing CV implementation would mix train.parquet + test.parquet rows into the K-fold pool. See [Future work](overview.md#future-work-post-phase-6) for the biodeg_gwu-aware variant. |
+
+  **How to pick the right value for your config:** open the relevant `preformat_*` function in `master_loader.py`. If it sets `dataset.split_idxs = [...]` → use `standard`. If not, and your data has SMILES → use `scaffold`. Otherwise → `random` or generate split indices in the loader.
 
 ## Training, optimization, losses
 - **Optimizer**: AdamW with weight decay (typical 1e-2), gradient clipping enabled in configs.
