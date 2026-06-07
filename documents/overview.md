@@ -175,7 +175,7 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
   - [X] Code in place: [graphgps/loader/dataset/biodeg.py](../graphgps/loader/dataset/biodeg.py) (sibling of biodeg_gwu loader; same featurisation + split convention); `preformat_Biodeg` registered as `PyG-biodeg` in [master_loader.py](../graphgps/loader/master_loader.py); `PyG-biodeg` branch added to [linear_edge_encoder.py](../graphgps/encoder/linear_edge_encoder.py); baseline config at [configs/biodegradability/Biodeg-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-DGT-Pipeline.yaml).
   - [X] Run the prepare script: `python scripts/prepare_data.py --dataset biodeg --trans-learn-path /home/jovyan/tools/trans_learn`.
   - [X] Inspect manifest + class balance via the dataset-level smoke test (same one-liner as for biodeg_gwu, swapping the path to `datasets/biodeg`).
-  - [ ] Run 3-epoch dry-run end-to-end with `python main.py --cfg configs/biodegradability/Biodeg-DGT-Pipeline.yaml --repeat 1 seed 0 wandb.use False optim.max_epoch 3` to confirm the full pipeline works.
+  - [X] Run 3-epoch dry-run end-to-end with `python main.py --cfg configs/biodegradability/Biodeg-DGT-Pipeline.yaml --repeat 1 seed 0 wandb.use False optim.max_epoch 3` to confirm the full pipeline works.
   - [ ] Full 4-seed run + record in [trained_models.md](trained_models.md) HPO sweeps table (or just baseline if you're not exploring HPO for this dataset yet).
 
 > **Fork bugs cleared during Phase 1** (would have bitten any fresh dataset, not just biodeg_gwu — BBBP didn't trigger them because the user happened to have a previously-compatible graph_tool installed):

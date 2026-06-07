@@ -8,11 +8,9 @@
 #   - dataset.name:   biodeg     (matches the trans_learn DATASET_REGISTRY key)
 #   - wandb.project:  Biodeg     (logically distinct W&B workspace)
 #
-# Class balance — to be verified once you run the dataset-level smoke test
-# (load via `Biodeg('datasets/biodeg')` and inspect splits). If positive
-# fraction falls outside roughly 30-70 %, consider switching loss_fun to
-# `weighted_cross_entropy` or `focal_loss` (Phase 3 note in overview.md).
-# For now, plain cross_entropy mirrors the biodeg_gwu baseline.
+# Class balance from dataset smoke test (2026-06-07): train 41.0% / val 39.1%
+# / test 38.8% positive → plain `cross_entropy` is correct (no weighted /
+# focal needed). desc_dim=216 (vs biodeg_gwu's 247); only used in Phase 2+.
 
 out_dir: results/DGT
 metric_best: auc

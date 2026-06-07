@@ -80,7 +80,7 @@ What happens:
 ### Step 3 — Final test on the best checkpoint (automatic)
 
 After the train+val loop finishes, `dgt_train` automatically:
-- Loads the best-val checkpoint.
+- Loads the best-val checkpoint. (NOTE different to custom_train.py in original code where test will also be evaluated each training epoch, while in dgt_train.py only train and validation data will be evaluated, and test data will be scored only once training is done and over the best model.)
 - Runs the test loader **once**.
 - Writes `test/stats.json` (one line, at the best-val epoch).
 - Dumps per-sample predictions to `<run_dir>/test/predictions.pt`.
