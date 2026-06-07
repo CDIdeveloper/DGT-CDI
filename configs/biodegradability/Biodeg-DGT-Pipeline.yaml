@@ -52,7 +52,9 @@ posenc_RWSE:
   raw_norm_type: None
 train:
   mode: dgt              # DGT pipeline (train+val each epoch; test once on best ckpt)
-  batch_size: 32
+  batch_size: 16         # 32 OOMs on a 14.6 GiB T4: biodeg has larger molecules than
+                         # biodeg_gwu, so a batch's bond-bond tensor [B, M_max^2, D] in
+                         # the line-graph attention path overflows. See tech.md.
   eval_period: 1
   enable_ckpt: True
   ckpt_best: True

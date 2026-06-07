@@ -173,8 +173,8 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
   **Result (2026-05-28):** exit code 0; converged (train_loss 0.72 → 0.54, val AUC 0.43 → 0.81); test AUC = **0.8115** at best-val epoch 2; 300 test rows tested automatically by `dgt_train`. Cleared three pre-existing fork bugs along the way (see "Fork bugs cleared during Phase 1" below).
 - [ ] **After `biodeg_gwu` works end-to-end:** repeat the same steps for the `biodeg` (no-Reaxys) dataset.
   - [X] Code in place: [graphgps/loader/dataset/biodeg.py](../graphgps/loader/dataset/biodeg.py) (sibling of biodeg_gwu loader; same featurisation + split convention); `preformat_Biodeg` registered as `PyG-biodeg` in [master_loader.py](../graphgps/loader/master_loader.py); `PyG-biodeg` branch added to [linear_edge_encoder.py](../graphgps/encoder/linear_edge_encoder.py); baseline config at [configs/biodegradability/Biodeg-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-DGT-Pipeline.yaml).
-  - [ ] Run the prepare script: `python scripts/prepare_data.py --dataset biodeg --trans-learn-path /home/jovyan/tools/trans_learn`.
-  - [ ] Inspect manifest + class balance via the dataset-level smoke test (same one-liner as for biodeg_gwu, swapping the path to `datasets/biodeg`).
+  - [X] Run the prepare script: `python scripts/prepare_data.py --dataset biodeg --trans-learn-path /home/jovyan/tools/trans_learn`.
+  - [X] Inspect manifest + class balance via the dataset-level smoke test (same one-liner as for biodeg_gwu, swapping the path to `datasets/biodeg`).
   - [ ] Run 3-epoch dry-run end-to-end with `python main.py --cfg configs/biodegradability/Biodeg-DGT-Pipeline.yaml --repeat 1 seed 0 wandb.use False optim.max_epoch 3` to confirm the full pipeline works.
   - [ ] Full 4-seed run + record in [trained_models.md](trained_models.md) HPO sweeps table (or just baseline if you're not exploring HPO for this dataset yet).
 
