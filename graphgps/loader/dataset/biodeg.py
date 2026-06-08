@@ -11,11 +11,10 @@ source data. Differences:
 
 Featurisation, split convention (90/10 train/val from train.parquet;
 test.parquet untouched), and Data-object shape are identical to
-biodeg_gwu.py. The atom/bond feature maps + `_smiles_to_xy` helper are
-duplicated here for clarity (3rd copy across the codebase, counting
-scripts/predict.py); if a 4th dataset arrives, extract to a shared
-`_mol_featurise.py` utility — see [Future work in overview.md](
-../../../documents/overview.md#future-work-post-phase-6).
+biodeg_gwu.py. Both loaders import the shared `smiles_to_xy` helper from
+[_mol_featurise.py](_mol_featurise.py) (single source of truth);
+`scripts/predict.py` keeps its own copy intentionally (self-contained
+deployment artifact).
 """
 import json
 import logging
@@ -24,88 +23,10 @@ import os.path as osp
 import numpy as np
 import pandas as pd
 import torch
-from rdkit import Chem
 from torch_geometric.data import Data, InMemoryDataset
 from tqdm import tqdm
 
-# Atom / bond feature maps — copied verbatim from
-# torch_geometric.datasets.MoleculeNet (PyG 2.0.4) so featurisation matches
-# what BBBP / FreeSolv / biodeg_gwu saw at training time, and what
-# scripts/predict.py emits at inference time.
-_X_MAP = {
-    'atomic_num': list(range(0, 119)),
-    'chirality': [
-        'CHI_UNSPECIFIED',
-        'CHI_TETRAHEDRAL_CW',
-        'CHI_TETRAHEDRAL_CCW',
-        'CHI_OTHER',
-    ],
-    'degree': list(range(0, 11)),
-    'formal_charge': list(range(-5, 7)),
-    'num_hs': list(range(0, 9)),
-    'num_radical_electrons': list(range(0, 5)),
-    'hybridization': [
-        'UNSPECIFIED', 'S', 'SP', 'SP2', 'SP3', 'SP3D', 'SP3D2', 'OTHER',
-    ],
-    'is_aromatic': [False, True],
-    'is_in_ring': [False, True],
-}
-_E_MAP = {
-    'bond_type': [
-        'misc', 'SINGLE', 'DOUBLE', 'TRIPLE', 'AROMATIC',
-    ],
-    'stereo': [
-        'STEREONONE', 'STEREOZ', 'STEREOE',
-        'STEREOCIS', 'STEREOTRANS', 'STEREOANY',
-    ],
-    'is_conjugated': [False, True],
-}
-
-
-def _smiles_to_xy(smiles):
-    """SMILES → (x, edge_index, edge_attr) or None if RDKit can't parse it."""
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
-
-    xs = []
-    for atom in mol.GetAtoms():
-        xs.append([
-            _X_MAP['atomic_num'].index(atom.GetAtomicNum()),
-            _X_MAP['chirality'].index(str(atom.GetChiralTag())),
-            _X_MAP['degree'].index(atom.GetTotalDegree()),
-            _X_MAP['formal_charge'].index(atom.GetFormalCharge()),
-            _X_MAP['num_hs'].index(atom.GetTotalNumHs()),
-            _X_MAP['num_radical_electrons'].index(
-                atom.GetNumRadicalElectrons()),
-            _X_MAP['hybridization'].index(str(atom.GetHybridization())),
-            _X_MAP['is_aromatic'].index(atom.GetIsAromatic()),
-            _X_MAP['is_in_ring'].index(atom.IsInRing()),
-        ])
-    x = torch.tensor(xs, dtype=torch.long).view(-1, 9)
-
-    edge_indices, edge_attrs = [], []
-    for bond in mol.GetBonds():
-        i, j = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-        e = [
-            _E_MAP['bond_type'].index(str(bond.GetBondType())),
-            _E_MAP['stereo'].index(str(bond.GetStereo())),
-            _E_MAP['is_conjugated'].index(bond.GetIsConjugated()),
-        ]
-        edge_indices += [[i, j], [j, i]]
-        edge_attrs += [e, e]
-
-    edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous().view(2, -1)
-    edge_attr = torch.tensor(edge_attrs, dtype=torch.long).view(-1, 3)
-
-    # Sort edges by (src, dst) — matches MoleculeNet's output order.
-    if edge_index.numel() > 0:
-        n = max(mol.GetNumAtoms(), 1)
-        perm = (edge_index[0] * n + edge_index[1]).argsort()
-        edge_index = edge_index[:, perm]
-        edge_attr = edge_attr[perm]
-
-    return x, edge_index, edge_attr
+from graphgps.loader.dataset._mol_featurise import smiles_to_xy
 
 
 class Biodeg(InMemoryDataset):
@@ -189,7 +110,7 @@ class Biodeg(InMemoryDataset):
             ):
                 smiles = smiles_values[row_idx]
 
-                feats = _smiles_to_xy(smiles)
+                feats = smiles_to_xy(smiles)
                 if split_source == 'test':
                     split_tag = 'test'
                 else:

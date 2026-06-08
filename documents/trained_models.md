@@ -1,4 +1,4 @@
-# Trained models for biodeg_gwu
+# Trained models
 
 Two tables — **HPO sweeps** (one per dataset × round; used to pick a winning config) and **Final models** (deployment-ready models produced by retraining on the winner). For the workflow that produces these entries, see [modeling_routine.md → Step 6 / Step 7](modeling_routine.md#step-6--iterate-hpo-across-configs-if-exploring-hyperparameters).
 
@@ -46,6 +46,16 @@ I'd **skip a round 2 of HPO and go straight to Phase 2 (`DescriptorGraphHead`)**
 | `wd1e3` | `optim.weight_decay: 1e-2 → 1e-3` | weaker WD; opposite hypothesis to the above (maybe baseline is over-regularised) |
 
 These are cheap (same compute as round 1, same memory) but expected to give Δ AUC of 0.001–0.005 at most — within or just outside baseline std. Worth it only if you want a tight publication number; otherwise Phase 2 first.
+
+### biodeg — round 1
+
+Baseline-only (no HPO planned for this dataset yet — establishing a no-descriptor reference for the Phase-2 ablation, same as biodeg_gwu). Same architecture/hyperparameters as the biodeg_gwu baseline; the only deviation is `train.batch_size: 16` (32 OOMs on a 14.6 GiB T4 — biodeg has larger molecules; see [tech.md](tech.md#end-to-end-data-flow)).
+
+| Variant | Config | Change vs baseline | Test AUC (mean ± std, 4 seeds) | Test F1 (mean) | Test accuracy (mean) | Best-val epoch (mean) | Δ Test AUC vs baseline | Notes |
+|---|---|---|---|---|---|---|---|---|
+| baseline | [Biodeg-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-DGT-Pipeline.yaml) | — | 0.9007 ± 0.0024 | 0.7918 | 0.8335 | 33 | 0 | run date 2026-06-08; git SHA `c1c5e1a`. precision 0.7699, recall 0.8160. batch_size=16 (T4 OOM at 32). Data: 8054 mols, ~39–41% pos, desc_dim=216. |
+
+**Cross-dataset note (not a clean single-knob comparison — different data + smaller batch):** biodeg's baseline AUC (0.9007 ± 0.0024) is **+0.0186** over the biodeg_gwu baseline (0.8821 ± 0.0034) — biodeg appears to be a modestly easier/cleaner task at this scale. Tighter std too (0.0024 vs 0.0034). Healthy result; no `loss_fun` change was needed (class balance ~39–41% positive across all splits).
 
 ## Final model without molecular descriptor
 
