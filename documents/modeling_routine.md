@@ -37,7 +37,7 @@ Two sub-steps, **in order** — `analyze_run.py` must run first so the F1-optima
 
 ```bash
 # (a) plots + summary.json (incl. best_f1_threshold) for every seed
-for s in 0 1 2 3; do python scripts/analyze_run.py results/DGT/Biodeg-DGT-Pipeline/$s; done
+for s in 0 1 2 3; do python scripts/analyze_run.py results/DGT/Biodeg-DGT-Pipeline/$s --no-plots; done
 
 # (b) retrain on train+val (median seed, its best-val epoch) → writes the 3-file bundle
 python scripts/retrain_on_trainval.py results/DGT/Biodeg-DGT-Pipeline/
