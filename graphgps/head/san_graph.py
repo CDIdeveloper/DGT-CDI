@@ -105,6 +105,76 @@ class LineGraphHead(nn.Module):
         return pred, label
 
 
+@register_head('line_graph_with_desc')
+class LineGraphWithDescHead(nn.Module):
+    """DGT graph head with late fusion of molecular descriptors.
+
+    Identical to `LineGraphHead` (per-node FC -> pool atoms & bonds), but a
+    projected molecular-descriptor vector `f(desc)` is concatenated with the
+    pooled `[atom || bond]` vector AFTER the readout (pooling), just before the
+    final `out_layer`. Descriptors are graph-level (`batch.desc` is
+    `[B, desc_dim]`) and never enter the backbone/encoders/attention.
+
+    Sizes:
+        f(desc): Linear(cfg.dataset.desc_dim -> cfg.gnn.desc_proj_dim) -> act
+        out_layer in: 2 * dim_in // 2**L + cfg.gnn.desc_proj_dim
+    """
+
+    def __init__(self, dim_in, dim_out, L=2):
+        super().__init__()
+        self.pooling_fun = register.pooling_dict[cfg.model.graph_pooling]
+        list_FC_layers = [nn.Linear(dim_in // 2 ** l, dim_in // 2 ** (l + 1), bias=True) for l in range(L)]
+        self.FC_layers = nn.ModuleList(list_FC_layers)
+        list_edge_FC_layers = [nn.Linear(dim_in // 2 ** l, dim_in // 2 ** (l + 1), bias=True) for l in range(L)]
+        self.edge_FC_layers = nn.ModuleList(list_edge_FC_layers)
+        # Descriptor projection f(desc): desc_dim -> desc_proj_dim (+ activation
+        # applied in forward, reusing self.activation).
+        self.desc_lin = nn.Linear(cfg.dataset.desc_dim, cfg.gnn.desc_proj_dim, bias=True)
+        self.out_layer = nn.Linear(
+            2 * dim_in // 2 ** L + cfg.gnn.desc_proj_dim, dim_out, bias=True)
+        self.L = L
+        self.activation = register.act_dict[cfg.gnn.act]
+
+    def _apply_index(self, batch):
+        return batch.graph_feature, batch.y
+
+    def forward(self, batch):
+        graph_emb = batch.x
+        for l in range(self.L):
+            graph_emb = self.FC_layers[l](graph_emb)
+            graph_emb = self.activation(graph_emb)
+        graph_feature = self.pooling_fun(graph_emb, batch.batch)
+
+        graph_edge_emb = batch.e
+        for l in range(self.L):
+            graph_edge_emb = self.edge_FC_layers[l](graph_edge_emb)
+            graph_edge_emb = self.activation(graph_edge_emb)
+        graph_edge_feature = self.pooling_fun(graph_edge_emb, batch.e_batch)
+        graph_edge_feature = torch.cat([
+            graph_edge_feature,
+            graph_edge_feature.new_zeros(
+                (graph_feature.size(0) - graph_edge_feature.size(0),
+                 graph_edge_feature.size(1))
+            )
+        ], dim=0)
+
+        # ──────────────────────────────────────────────────────────────────
+        # MOLECULAR DESCRIPTORS CONSUMED HERE
+        # Late fusion: project the graph-level descriptor vector and concat it
+        # with the pooled atom/bond features AFTER the readout (pooling), just
+        # before out_layer. `batch.desc` is [B, desc_dim] from PyG collation;
+        # it never passes through the backbone / encoders / attention.
+        # Paired with the ENTER-HERE markers in the biodeg / biodeg_gwu
+        # loaders (grep 'MOLECULAR DESCRIPTORS' => N ENTER + 1 CONSUMED).
+        # ──────────────────────────────────────────────────────────────────
+        desc = self.activation(self.desc_lin(batch.desc))
+        graph_feature = torch.cat(
+            [graph_feature, graph_edge_feature, desc], dim=1)
+        batch.graph_feature = self.out_layer(graph_feature)
+        pred, label = self._apply_index(batch)
+        return pred, label
+
+
 @register_head('edge_graph')
 class EdgeGraphHead(nn.Module):
     """

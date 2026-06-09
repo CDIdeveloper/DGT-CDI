@@ -624,6 +624,7 @@ def preformat_BiodegGwu(dataset_dir, name):
     del name  # unused; single-subset dataset
     dataset = BiodegGwu(
         dataset_dir,
+        standardize_desc=cfg.dataset.standardize_desc,
         transform=partial(typecast_x_and_edge_attr, type_str='float'),
     )
     # ChIRo pattern: each Data carries a `split` tag; convert to the
@@ -647,6 +648,7 @@ def preformat_Biodeg(dataset_dir, name):
     del name  # unused; single-subset dataset
     dataset = Biodeg(
         dataset_dir,
+        standardize_desc=cfg.dataset.standardize_desc,
         transform=partial(typecast_x_and_edge_attr, type_str='float'),
     )
     train_graph_index = [i for i, d in enumerate(dataset) if d.split == 'train']

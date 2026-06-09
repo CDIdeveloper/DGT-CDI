@@ -1,0 +1,93 @@
+# Descriptor-fusion config for the biodeg dataset (no-Reaxys variant).
+#
+# Phase-2 sibling of Biodeg-DGT-Pipeline.yaml (the no-descriptor baseline).
+# Identical backbone/optimizer; the only differences are the descriptor channel:
+#   - gnn.head: line_graph_with_desc  (was: line_graph) — late-fusion head
+#   - gnn.desc_proj_dim: 128          — output of f(desc); tune to modulate impact
+#   - dataset.desc_dim: 216           — from datasets/biodeg/raw/manifest.json
+#   - dataset.standardize_desc: True  — z-score (train-split stats); writes a
+#                                       SEPARATE processed cache (data_stdesc.pt),
+#                                       leaving the baseline's data.pt untouched
+#
+# Descriptors enter ONLY at the head (after the readout); the DGT backbone is
+# identical to the baseline, so this is the with-descriptor arm of the ablation.
+# See documents/adr/0001-pr-mol-desc.md.
+
+out_dir: results/DGT
+metric_best: auc
+metric_agg: argmax
+wandb:
+  use: False
+  project: Biodeg-WithDesc
+dataset:
+  format: PyG-biodeg
+  name: biodeg
+  task: graph
+  task_type: classification_binary
+  transductive: False
+  split_mode: standard
+  node_encoder: True
+  node_encoder_name: LinearNode
+  node_encoder_bn: False
+  edge_encoder: True
+  edge_encoder_shared: True
+  edge_encoder_name: LinearEdge+RWSE-SPDE
+  edge_encoder_num_types: 3
+  edge_encoder_bn: False
+  spd: True
+  spd_max_length: 8
+  rings: True
+  rings_max_length: 18
+  rings_coalesce_edges: False
+  desc_dim: 216             # per datasets/biodeg/raw/manifest.json
+  standardize_desc: True    # z-score (train-split stats) → separate cache
+share:
+  dim_in: 9
+posenc_RWSE:
+  enable: True
+  enable_edges: True
+  kernel:
+    times_func: range(1,17)
+  model: Linear
+  dim_pe: 64
+  raw_norm_type: None
+train:
+  mode: dgt
+  batch_size: 16           # 32 OOMs on a 14.6 GiB T4 (see tech.md)
+  eval_period: 1
+  enable_ckpt: True
+  ckpt_best: True
+  ckpt_clean: True
+model:
+  type: DGTModel
+  loss_fun: cross_entropy
+  edge_decoding: dot
+  graph_pooling: add
+gt:
+  layer_type: None+DGT
+  layers: 4
+  n_heads: 16
+  dim_hidden: 128  # must equal gnn.dim_inner
+  dropout: 0.0
+  attn_dropout: 0.3
+  layer_norm: False
+  batch_norm: True
+gnn:
+  head: line_graph_with_desc   # late-fusion descriptor head (Phase 2)
+  desc_proj_dim: 128           # output of f(desc); tune to modulate descriptor impact
+  layers_pre_mp: 0
+  layers_post_mp: 3
+  dim_inner: 128  # must equal gt.dim_hidden
+  batchnorm: True
+  act: gelu
+  dropout: 0.0
+  agg: mean
+  normalize_adj: False
+optim:
+  clip_grad_norm: True
+  optimizer: adamW
+  weight_decay: 1e-2
+  base_lr: 0.0004
+  max_epoch: 50
+  scheduler: cosine_with_warmup
+  num_warmup_epochs: 10

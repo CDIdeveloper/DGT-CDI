@@ -29,3 +29,14 @@ def dataset_cfg(cfg):
 
     # Whether to complete dense edge features
     cfg.dataset.edge_encoder_dense = True
+
+    # --- Molecular descriptors (Phase 2, late fusion at the head) ---
+    # Dimensionality of the per-molecule descriptor vector (Data.desc).
+    # 0 = no descriptors (baseline). Set to the dataset's desc_dim
+    # (biodeg=216, biodeg_gwu=247) for the line_graph_with_desc head.
+    cfg.dataset.desc_dim = 0
+
+    # When True, the loader z-scores descriptors using TRAIN-split mean/std
+    # and writes a SEPARATE processed cache (the baseline raw-desc cache is
+    # preserved). Stats + column names are persisted to desc_stats.json.
+    cfg.dataset.standardize_desc = False

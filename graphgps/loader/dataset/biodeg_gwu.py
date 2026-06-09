@@ -61,9 +61,13 @@ class BiodegGwu(InMemoryDataset):
     # deliberately want a different held-out set.
     SPLIT_SEED = 42
 
-    def __init__(self, root, transform=None, pre_transform=None,
-                 pre_filter=None):
+    def __init__(self, root, standardize_desc=False, transform=None,
+                 pre_transform=None, pre_filter=None):
         self.name = 'biodeg_gwu'
+        # When True: z-score descriptors with train-split stats and cache to a
+        # SEPARATE processed file (set before super().__init__, which reads
+        # processed_file_names to decide whether process() must run).
+        self.standardize_desc = standardize_desc
         super().__init__(root, transform, pre_transform, pre_filter)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
@@ -73,7 +77,9 @@ class BiodegGwu(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return 'data.pt'
+        # Standardised-descriptor runs use a separate cache so the baseline
+        # raw-desc cache is preserved (new model -> new cache).
+        return 'data_stdesc.pt' if self.standardize_desc else 'data.pt'
 
     def download(self):
         # No automatic download — this dataset is fetched offline by
@@ -115,6 +121,34 @@ class BiodegGwu(InMemoryDataset):
         perm = rng.permutation(n_train_full)
         n_val = int(round(n_train_full * self.VAL_FRACTION))
         val_idx_set = set(perm[:n_val].tolist())
+
+        # Optional descriptor standardisation (Phase 2, Option A): z-score with
+        # TRAIN-split stats only (no val/test leakage), then persist stats +
+        # column names so val/test/predict reuse identical normalisation.
+        desc_mean = desc_std = None
+        if self.standardize_desc:
+            train_desc = df_train[descriptor_cols].astype(float).to_numpy()
+            is_train = np.array(
+                [i not in val_idx_set for i in range(n_train_full)]
+            )
+            train_only = train_desc[is_train]
+            desc_mean = train_only.mean(axis=0)
+            desc_std = train_only.std(axis=0)
+            # Constant columns (std~0): set std=1 so (x-mean)=0 maps to 0.
+            desc_std = np.where(desc_std < 1e-8, 1.0, desc_std)
+            stats_path = osp.join(self.processed_dir, 'desc_stats.json')
+            with open(stats_path, 'w') as fh:
+                json.dump({
+                    'descriptor_columns': list(descriptor_cols),
+                    'desc_dim': desc_dim,
+                    'mean': desc_mean.tolist(),
+                    'std': desc_std.tolist(),
+                    'standardize': True,
+                    'split_seed': self.SPLIT_SEED,
+                    'val_fraction': self.VAL_FRACTION,
+                }, fh, indent=2)
+            logging.info(f"{self.name}: standardised descriptors (train-split "
+                         f"stats); wrote {stats_path}")
 
         # 3. Featurise each row.
         # NB: pre-extracting NumPy arrays (not df.itertuples) — itertuples
@@ -167,9 +201,10 @@ class BiodegGwu(InMemoryDataset):
                 # it with the pooled atom/bond embeddings at readout.
                 # See documents/overview.md Phase 2 for the design rationale.
                 # ─────────────────────────────────────────────────────────
-                desc = torch.tensor(
-                    desc_array[row_idx], dtype=torch.float
-                ).view(1, -1)
+                desc_vec = desc_array[row_idx]
+                if desc_mean is not None:
+                    desc_vec = (desc_vec - desc_mean) / desc_std
+                desc = torch.tensor(desc_vec, dtype=torch.float).view(1, -1)
                 assert desc.shape == (1, desc_dim), (
                     f"desc shape {desc.shape} != (1, {desc_dim}) — "
                     f"check the manifest against the parquet columns."

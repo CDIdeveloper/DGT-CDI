@@ -185,7 +185,7 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 > 2. [graphgps/encoder/linear_edge_encoder.py](../graphgps/encoder/linear_edge_encoder.py) `LinearEdgeEncoder.__init__` — hardcoded format dispatcher rejected `PyG-biodeg_gwu`. Fixed with a one-line elif; deeper refactor logged in [Future work](#future-work-post-phase-6).
 
 ## Phase 2 — Descriptor plumbing (late fusion)
-- [ ] Start a new branch for this update
+- [X] Start a new branch for this update
 - [ ] Standardise descriptors (z-score using train-set mean/std; persist stats so test/val use the same normalisation).
 - [ ] Carry descriptors through the DGT backbone untouched — `batch.desc` is a graph-level tensor `[B, desc_dim]` produced directly by PyG's mini-batch collation. It does **not** pass through `to_dense_batch` (that only applies to node-level tensors), so no backbone code needs to change.
 - [ ] Add `DescriptorGraphHead` under [graphgps/head/](../graphgps/head/) — same as the current `line_graph` head (`LineGraphHead`, [san_graph.py:57](../graphgps/head/san_graph.py#L57)) but concatenates `batch.desc` (optionally passed through a small MLP) before the final `out_layer`. Register via `register_head` (e.g. as `line_graph_with_desc`).

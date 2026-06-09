@@ -339,6 +339,24 @@ SMILES ── RDKit ──▶ x, edge_index, edge_attr, pos
 
   **How to pick the right value for your config:** open the relevant `preformat_*` function in `master_loader.py`. If it sets `dataset.split_idxs = [...]` → use `standard`. If not, and your data has SMILES → use `scaffold`. Otherwise → `random` or generate split indices in the loader.
 
+### Data lineage — raw → cache → model → prediction
+
+End-to-end path for the biodeg / biodeg_gwu datasets (lines tagged `# Phase 2` are planned in [adr/0001](adr/0001-pr-mol-desc.md), not yet implemented):
+
+```
+trans_learn DATASET_REGISTRY (mirror: tests/data_loading/settings.py)                                            # per-dataset: S3 parquet paths, id_column_count, target_column, cleanup flags
+   ─DatasetLoader (tests/data_loading/load_data.py)─▶ read S3 parquet, clean, split cols                          # first id_column_count cols = SMILES/ids/y ; REST = descriptors (biodeg=5, biodeg_gwu=10)
+   ─prepare_data.py─▶ datasets/<name>/raw/{train,test}.parquet (+ manifest.json: descriptor_columns, desc_dim)    # raw desc, unnormalised (normalise=OFF)
+   ─<loader>.process()─▶ datasets/<name>/processed/data*.pt   (Data.desc [1, desc_dim])                           # train.parquet→90/10 train/val ; test.parquet→test
+        └ z-score desc with TRAIN-split μ/σ ─▶ desc_stats.json                                                    # Phase 2 (Option A): normalise + persist μ/σ + column names; written to a SEPARATE processed cache
+   ─main.py (train.mode: dgt)─▶ results/DGT/<cfg>/<seed>/{ckpt, test/predictions.pt}
+   ─analyze_run.py─▶ <seed>/plots/summary.json  (best_f1_threshold)
+   ─retrain_on_trainval.py─▶ final_model.{ckpt,config.yaml,json}                                                  # json carries provenance; # Phase 2: + descriptor_columns + desc_stats
+   ─predict.py─▶ <out>.csv  (+ <out>_eval/ when --label-col)                                                      # Phase 2: re-applies desc_stats from final_model.json
+```
+
+**Where descriptor columns come from:** they are *positional* — every parquet column after the first `id_column_count` (set per-dataset in `DATASET_REGISTRY`). `DatasetLoader._split_ids_and_descs` makes the cut; `prepare_data.py` records the resulting names + count in `manifest.json` (`descriptor_columns`, `desc_dim`). `Data.desc` is graph-level `[B, desc_dim]` after collation and is **never** routed through `to_dense_batch` or the DGT backbone — only the `line_graph_with_desc` head reads it (Phase 2). Per-molecule featurisation lives in [graphgps/loader/dataset/_mol_featurise.py](../graphgps/loader/dataset/_mol_featurise.py) (shared by both loaders; `predict.py` keeps an intentional standalone copy).
+
 ## Training, optimization, losses
 - **Optimizer**: AdamW with weight decay (typical 1e-2), gradient clipping enabled in configs.
 - **Schedulers** ([graphgps/optimizer/extra_optimizers.py](../graphgps/optimizer/extra_optimizers.py)): cosine-with-warmup (default), reduce-on-plateau, step decay. Pretraining uses linear warmup (5 epochs) + cosine annealing as described in the paper.

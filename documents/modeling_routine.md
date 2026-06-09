@@ -15,6 +15,8 @@ This doc covers five things:
 
 ## Quickstart — end-to-end training routine
 
+Make sure data is ready to train, see scripts/prepare_data.py for more details.
+
 The full path from a config to predicting on new molecules, in three stages. Worked example: [Biodeg-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-DGT-Pipeline.yaml). Results land under `results/DGT/<config_basename>/` — here `results/DGT/Biodeg-DGT-Pipeline/`. Run on the remote with `mamba activate dgt`. Substitute any other config to reuse verbatim.
 
 ```
