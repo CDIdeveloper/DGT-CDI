@@ -40,3 +40,11 @@ def dataset_cfg(cfg):
     # and writes a SEPARATE processed cache (the baseline raw-desc cache is
     # preserved). Stats + column names are persisted to desc_stats.json.
     cfg.dataset.standardize_desc = False
+
+    # Descriptor-column selection (Phase 2 descriptor-type study). Precedence:
+    # desc_columns (explicit) > desc_include/desc_exclude (substrings) > all.
+    # Any non-empty selection -> its own processed cache (keyed by a hash of the
+    # resolved columns). Set dataset.desc_dim to the SELECTED count.
+    cfg.dataset.desc_include = []   # keep columns containing ANY substring (e.g. ['_gwu'])
+    cfg.dataset.desc_exclude = []   # drop columns containing ANY substring
+    cfg.dataset.desc_columns = []   # explicit exact column names (subset)

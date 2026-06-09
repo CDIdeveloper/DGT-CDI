@@ -43,6 +43,10 @@ from torch_geometric.data import Data, InMemoryDataset
 from tqdm import tqdm
 
 from graphgps.loader.dataset._mol_featurise import smiles_to_xy
+from graphgps.loader.dataset._desc_select import (
+    select_descriptor_columns,
+    selection_tag,
+)
 
 
 class BiodegGwu(InMemoryDataset):
@@ -61,13 +65,20 @@ class BiodegGwu(InMemoryDataset):
     # deliberately want a different held-out set.
     SPLIT_SEED = 42
 
-    def __init__(self, root, standardize_desc=False, transform=None,
+    def __init__(self, root, standardize_desc=False, desc_include=None,
+                 desc_exclude=None, desc_columns=None, transform=None,
                  pre_transform=None, pre_filter=None):
         self.name = 'biodeg_gwu'
-        # When True: z-score descriptors with train-split stats and cache to a
-        # SEPARATE processed file (set before super().__init__, which reads
+        # standardize_desc: z-score descriptors with train-split stats.
+        # desc_include/exclude/columns: subset which descriptors are used.
+        # Both change desc content -> a SEPARATE processed cache keyed by the
+        # resolved selection (resolved before super().__init__, which reads
         # processed_file_names to decide whether process() must run).
         self.standardize_desc = standardize_desc
+        self.desc_include = list(desc_include or [])
+        self.desc_exclude = list(desc_exclude or [])
+        self.desc_columns = list(desc_columns or [])
+        self._resolve_desc_selection(root)
         super().__init__(root, transform, pre_transform, pre_filter)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
@@ -77,9 +88,33 @@ class BiodegGwu(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        # Standardised-descriptor runs use a separate cache so the baseline
-        # raw-desc cache is preserved (new model -> new cache).
-        return 'data_stdesc.pt' if self.standardize_desc else 'data.pt'
+        # Separate cache per (standardisation, descriptor-selection) so the
+        # baseline raw-desc cache and each subset never collide.
+        if not self.standardize_desc and self._selected_columns is None:
+            return 'data.pt'
+        prefix = 'data_stdesc' if self.standardize_desc else 'data_rawdesc'
+        return f'{prefix}{self._cache_suffix}.pt'
+
+    def _resolve_desc_selection(self, root):
+        """Resolve the descriptor-column subset + cache suffix from the manifest.
+
+        Reads ``root/raw/manifest.json`` (if present) for the full column list,
+        applies include/exclude/columns, and derives a short hash suffix for the
+        cache filename. Leaves selection unset (full set) when no spec is given
+        or the manifest is absent (download() then raises the prepare hint).
+        """
+        self._selected_columns = None
+        self._cache_suffix = ''
+        if not (self.desc_include or self.desc_exclude or self.desc_columns):
+            return
+        manifest_path = osp.join(root, 'raw', 'manifest.json')
+        if not osp.isfile(manifest_path):
+            return
+        with open(manifest_path) as fh:
+            all_cols = json.load(fh)['descriptor_columns']
+        self._selected_columns = select_descriptor_columns(
+            all_cols, self.desc_include, self.desc_exclude, self.desc_columns)
+        self._cache_suffix = '_' + selection_tag(self._selected_columns)
 
     def download(self):
         # No automatic download — this dataset is fetched offline by
@@ -103,7 +138,14 @@ class BiodegGwu(InMemoryDataset):
         smiles_col = manifest['smiles_column']
         target_col = manifest['target_column']
         descriptor_cols = manifest['descriptor_columns']
-        desc_dim = manifest['desc_dim']
+        # Optional descriptor-column selection (Phase 2 study); effective
+        # desc_dim is the SELECTED count, not the manifest's full count.
+        if self._selected_columns is not None:
+            descriptor_cols = self._selected_columns
+            logging.info(f"{self.name}: descriptor selection -> "
+                         f"{len(descriptor_cols)} cols (cache suffix "
+                         f"'{self._cache_suffix}').")
+        desc_dim = len(descriptor_cols)
 
         df_train = pd.read_parquet(osp.join(self.raw_dir, 'train.parquet'))
         df_test = pd.read_parquet(osp.join(self.raw_dir, 'test.parquet'))

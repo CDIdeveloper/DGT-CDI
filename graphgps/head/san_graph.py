@@ -167,6 +167,11 @@ class LineGraphWithDescHead(nn.Module):
         # Paired with the ENTER-HERE markers in the biodeg / biodeg_gwu
         # loaders (grep 'MOLECULAR DESCRIPTORS' => N ENTER + 1 CONSUMED).
         # ──────────────────────────────────────────────────────────────────
+        if batch.desc.size(1) != self.desc_lin.in_features:
+            raise ValueError(
+                f"descriptor width {batch.desc.size(1)} != configured "
+                f"dataset.desc_dim {self.desc_lin.in_features}. Set "
+                f"dataset.desc_dim to the (selected) descriptor count.")
         desc = self.activation(self.desc_lin(batch.desc))
         graph_feature = torch.cat(
             [graph_feature, graph_edge_feature, desc], dim=1)
