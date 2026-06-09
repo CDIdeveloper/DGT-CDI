@@ -99,11 +99,23 @@ python main.py --cfg configs/biodegradability/Biodeg-GWU-DGT-Pipeline-WithDesc-n
   --repeat 4 seed 0 wandb.use False optim.max_epoch 50    # (dry-run first as above)
 ```
 
-### Variant 5 — selected list
-Copy `...-WithDesc-gwu.yaml`, replace `desc_include: ['_gwu']` with
-`desc_columns: [<exact names>]`, and set `desc_dim` to the list length. Each
-distinct selection auto-keys its own processed cache (hash of the resolved
-columns), so variants never collide.
+### Variant 5 — selected list (SHAP-screened)
+Generate `desc_columns` from a SHAP-ranking CSV with
+[scripts/select_features_from_shap.py](../../scripts/select_features_from_shap.py)
+(reads the CSV from **S3**; criteria `--cumulative` / `--top-k` / `--abs` / `--coef-thresh`):
+```bash
+# recommended: cumulative coverage (use the qm_rdkit ranking = all features)
+python scripts/select_features_from_shap.py \
+  --s3-key ts_project_1/data/biodegradation/features/GWU/feature_rank_shap_gwu_b2_qm_rdkit.csv \
+  --trans-learn-path /home/jovyan/tools/trans_learn \
+  --cumulative 0.90
+```
+Paste the printed `desc_dim` + `desc_columns` into a copy of `...-WithDesc-gwu.yaml`
+(remove `desc_include`/`desc_exclude`). Each distinct selection auto-keys its own
+processed cache (hash of the resolved columns), so variants never collide.
+(For reference, on the **QM-only** ranking — 40 feats — cumulative 0.90→24, 0.95→28; the qm_rdkit ranking covers all ~247 and will give different counts — the script prints the count + coverage.)
+**SHAP caveats:** importance is model-specific (analysis model ≠ DGT) and must be
+train-only — see the design section below.
 
 ## Organization (proposed)
 - **Pipeline code** (descriptor column selection) → `graphgps` loader + config (a small pr-1 extension; it's a reusable pipeline capability, not project-specific code → no separate `projects/` code folder).
