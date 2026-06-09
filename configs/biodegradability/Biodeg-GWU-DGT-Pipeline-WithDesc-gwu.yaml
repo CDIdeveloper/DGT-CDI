@@ -33,7 +33,7 @@ dataset:
   rings: True
   rings_max_length: 18
   rings_coalesce_edges: False
-  desc_dim: 0               # <-- SET to the 'gwu' count (gwu.md count command)
+  desc_dim: 40               # <-- SET to the 'gwu' count (gwu.md count command)
   standardize_desc: True
   desc_include: ['_gwu']    # keep only columns whose name contains '_gwu'
 share:

@@ -15,30 +15,40 @@ only the descriptor channel changes, so AUC deltas are attributable to the descr
 |---|---|---|---|---|---|
 | 1 | no descriptors (baseline) | none | — | `Biodeg-GWU-DGT-Pipeline.yaml` | done (Phase 1) |
 | 2 | all descriptors | all | 247 | `Biodeg-GWU-DGT-Pipeline-WithDesc.yaml` | **no — runnable now** |
-| 3 | GWU only | colnames containing `_gwu` | ~40 | `Biodeg-GWU-DGT-Pipeline-WithDesc-gwu.yaml` | done (selection) |
-| 4 | non-GWU | all except `_gwu` | ~207 | `Biodeg-GWU-DGT-Pipeline-WithDesc-nongwu.yaml` | done (selection) |
+| 3 | GWU only | colnames containing `_gwu` | 40 | `Biodeg-GWU-DGT-Pipeline-WithDesc-gwu.yaml` | done (selection) |
+| 4 | non-GWU | all except `_gwu` | 207 | `Biodeg-GWU-DGT-Pipeline-WithDesc-nongwu.yaml` | done (selection) |
 | 5 | selected list | explicit column list | N | copy variant 3, set `desc_columns: [...]` | done (selection) |
 
-> Variants 3/4 configs have `desc_dim: 0` as a placeholder — **set it from the count command below** before running (the head asserts `desc_dim` matches the selected width, so a wrong value fails loudly).
+> Descriptor counts (from the count command below): total **247** = **40** GWU (`_gwu`) + **207** non-GWU. `desc_dim` is set accordingly in the variant 3/4 configs (the head asserts it matches the selected width).
 
 ## TODO
 - [x] **1. baseline (no desc)** — AUC 0.8821 ± 0.0034 ([trained_models.md](../trained_models.md))
-- [ ] **2. all descriptors** — config ready; run 4-seed (commands below)
-- [ ] **3. GWU-only** — config ready; set `desc_dim`, run 4-seed
-- [ ] **4. non-GWU** — needs the descriptor-selection feature
-- [ ] **5. selected list** — needs the descriptor-selection feature
+- [x] **2. all descriptors** — AUC 0.8966 ± 0.0027 (+0.0145 vs baseline; F1 0.819, acc 0.824)
+- [ ] **3. GWU-only** (desc_dim 40) — config ready; run 4-seed
+- [ ] **4. non-GWU** (desc_dim 207) — config ready; run 4-seed
+- [ ] **5. selected list** — define `desc_columns`, then run 4-seed
 
 ## Results (test AUC, 4-seed mean ± std)
 
 | # | Variant | desc_dim | Test AUC | Test F1 | Test acc | Δ vs baseline | Notes |
 |---|---|---|---|---|---|---|---|
-| 1 | none | — | 0.8821 ± 0.0034 | 0.7836 | 0.7950 | 0 | baseline |
-| 2 | all | 247 | | | | | |
-| 3 | gwu | ~40 | | | | | |
-| 4 | non-gwu | ~207 | | | | | |
+| 1 | none | — | 0.8821 ± 0.0034 | 0.7836 | 0.7950 | 0 | baseline (params 1.252M) |
+| 2 | all | 247 | 0.8966 ± 0.0027 | 0.8191 | 0.8242 | +0.0145 | descriptors help; best-val epoch 15; params 1.284M |
+| 3 | gwu | 40 | | | | | |
+| 4 | non-gwu | 207 | | | | | |
 | 5 | selected | | | | | | |
 
 Fill each row from `results/DGT/<config_basename>/agg/test/best.json` after the run.
+
+### Full metrics (4-seed mean)
+
+| No. | Variant | Accuracy | Precision | Recall | F1-Score | AUROC |
+|---|---|---|---|---|---|---|
+| 1 | none (baseline) | 0.7950 | 0.7936 | 0.7743 | 0.7836 | 0.8821 |
+| 2 | all (247) | 0.8242 | 0.8094 | 0.8299 | 0.8191 | 0.8966 |
+| 3 | GWU only (40) | | | | | |
+| 4 | non-GWU (207) | | | | | |
+| 5 | selected | | | | | |
 
 ## Commands
 
