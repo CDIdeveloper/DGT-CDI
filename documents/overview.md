@@ -177,8 +177,8 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
   - [X] Inspect manifest + class balance via the dataset-level smoke test (same one-liner as for biodeg_gwu, swapping the path to `datasets/biodeg`).
   - [X] Run 3-epoch dry-run end-to-end with `python main.py --cfg configs/biodegradability/Biodeg-DGT-Pipeline.yaml --repeat 1 seed 0 wandb.use False optim.max_epoch 3` to confirm the full pipeline works.
   - [X] Full 4-seed run + record in [trained_models.md](trained_models.md) HPO sweeps table (or just baseline if you're not exploring HPO for this dataset yet).
-  - [ ] train final and save models for `biodeg_gwu` and `biodeg`
-  - [ ] try test using tests/sample_smiles.csv
+- [ ] train final and save models for `biodeg_gwu` and `biodeg`
+- [ ] try test using tests/sample_smiles.csv
 
 > **Fork bugs cleared during Phase 1** (would have bitten any fresh dataset, not just biodeg_gwu — BBBP didn't trigger them because the user happened to have a previously-compatible graph_tool installed):
 > 1. [graphgps/transform/transforms.py](../graphgps/transform/transforms.py) `get_rings()` — `graph_tool.stats` submodule not auto-imported on conda-forge builds, *and* `remove_self_loops` / `remove_parallel_edges` moved from `graph_tool.stats` to `graph_tool.generation` in graph_tool 2.45+. Fixed via try/except (handles both old + new builds).
@@ -240,6 +240,11 @@ Note: this is **not** the paper's pretraining recipe. The paper's `### Pretraini
 - [ ] Atom/bond featurisation must match between the pretraining and fine-tuning datasets (same encoder, same `dim_in`) so the backbone weights are transferable.
 - [ ] **Verify:** fine-tuned-from-pretrained test ROC-AUC is compared against the from-scratch Phase 4 result over 4 seeds; keep pretraining only if it shows a clear, consistent gain.
 - Out of scope: self-supervised pretraining (masked-atom / contrastive) — not implemented in this repo, and a separate larger effort.
+
+## Phase 7 Deployment
+for a quick sanity check, default 0.5 is fine. For actual deployment where you care about the precision/recall balance of the yes/no calls, parsing --threshold optimal-f1 to scripts/predict.py gives a better-justified operating point than the arbitrary 0.5.
+
+- [ ] Example inline code
 
 ## Future work (post-Phase 6)
 

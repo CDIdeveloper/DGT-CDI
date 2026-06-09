@@ -9,6 +9,57 @@ This doc covers five things:
 4. [Recommended workflow](#recommended-workflow-cleanup-between-runs) — what to clean between runs and why (situation-based + by parameter category).
 5. (External) [trained_models.md](trained_models.md) — two tables: HPO sweeps (one per dataset × round) and Final models (deployment-ready models, post-retrain).
 
+**In a hurry?** The [Quickstart](#quickstart--end-to-end-training-routine) below is the whole flow (train → final model → predict) on one screen; the numbered steps further down are the detailed version.
+
+---
+
+## Quickstart — end-to-end training routine
+
+The full path from a config to predicting on new molecules, in three stages. Worked example: [Biodeg-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-DGT-Pipeline.yaml). Results land under `results/DGT/<config_basename>/` — here `results/DGT/Biodeg-DGT-Pipeline/`. Run on the remote with `mamba activate dgt`. Substitute any other config to reuse verbatim.
+
+```
+main.py (4-seed estimate)  →  analyze_run + retrain_on_trainval (one deployable model)  →  predict.py (score new SMILES)
+```
+
+### 1. Train — 4 seeds (the reported generalisation estimate)
+
+```bash
+python main.py --cfg configs/biodegradability/Biodeg-DGT-Pipeline.yaml \
+  --repeat 4 seed 0 wandb.use False optim.max_epoch 50
+```
+- Seeds 0–3. Each: train+val every epoch; test held out and run **once** on that seed's best-val checkpoint (`train.mode: dgt`).
+- Headline number (mean ± std across seeds): `cat results/DGT/Biodeg-DGT-Pipeline/agg/test/best.json`.
+- This aggregate is what you **report** — it stays the model's generalisation estimate even after the retrain below.
+
+### 2. Retrain → single deployable model (+ optimal-F1 threshold)
+
+Two sub-steps, **in order** — `analyze_run.py` must run first so the F1-optimal threshold is recorded into the deployment manifest:
+
+```bash
+# (a) plots + summary.json (incl. best_f1_threshold) for every seed
+for s in 0 1 2 3; do python scripts/analyze_run.py results/DGT/Biodeg-DGT-Pipeline/$s; done
+
+# (b) retrain on train+val (median seed, its best-val epoch) → writes the 3-file bundle
+python scripts/retrain_on_trainval.py results/DGT/Biodeg-DGT-Pipeline/
+```
+- Output bundle at the run root: `final_model.{ckpt,config.yaml,json}` (weights + pristine config + manifest) — a self-contained, copy-anywhere artifact.
+- **Order matters:** skip (a) and the manifest gets `"best_f1_threshold": null`, so `predict.py --threshold optimal-f1` won't work. (Fix after the fact: run (a), then copy the `chosen_seed`'s `best_f1_threshold` from its `plots/summary.json` into `final_model.json` — no need to re-run (b).)
+- `--include-test` opt-in: folds test into training for a deployment-only model (no held-out data left); filenames become `final_model_with_test.*`. Default (train+val only, test held out) is recommended.
+
+### 3. Predict on new SMILES
+
+```bash
+python scripts/predict.py \
+  --ckpt results/DGT/Biodeg-DGT-Pipeline/final_model.ckpt \
+  --smiles-csv tests/sample_smiles.csv \
+  --output-csv /tmp/biodeg_predict.csv
+```
+- Local-only — auto-discovers the sibling `final_model.config.yaml`; no S3, no `--orig-config` needed.
+- Default threshold 0.5; append `--threshold optimal-f1` to use `best_f1_threshold` from `final_model.json` (requires step 2a).
+- Output CSV = input columns + `y_pred_score`, `y_pred_label`, `remarks` (regression: `y_pred` + `remarks`).
+
+For HPO across multiple configs (baseline + variants), insert [Step 6](#step-6--iterate-hpo-across-configs-if-exploring-hyperparameters) between stages 1 and 2 to pick the winning config first. Full detail on every stage is in the numbered [Step-by-step procedure](#step-by-step-procedure) below.
+
 ---
 
 ## Where each thing already lives

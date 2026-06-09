@@ -59,12 +59,22 @@ Baseline-only (no HPO planned for this dataset yet — establishing a no-descrip
 
 ## Final model without molecular descriptor
 
-One row per deployment-ready model — the output of running `scripts/retrain_on_trainval.py` on an HPO winner. Test metrics carry over from the **original 4-seed dgt-mode run** of the same config (the retrain has no held-out test estimate of its own; the original aggregate is the closest unbiased proxy — see [modeling_routine.md Step 5 → "Two senses of 'test data is used'"](modeling_routine.md#two-senses-of-test-data-is-used)).
+### Biodegradation
 
-All five test metrics below are the **4-seed mean** from `agg/test/best.json` (default 0.5 threshold). The optimal-F1 threshold is recorded separately for deployment-time use — apply it via `predict.py --threshold optimal-f1` or by re-thresholding the raw scores.
+biodeg_gwu (GWU cleaned data) without molecular descriptor
+Model: results/final_models/Biodeg-GWU-DGT-Pipeline
+Performance (based on agg/test/best.json):
+{"epoch": 31, "time_epoch": 0.56185, "time_epoch_std": 0.02371, "loss": 0.46369, "loss_std": 0.01277, "lr": 0.0, "lr_std": 0.0, "params": 1252609.0, "params_std": 0.0, "time_iter": 0.05618, "time_iter_std": 0.00237, "accuracy": 0.795, "accuracy_std": 0.0119, "precision": 0.79362, "precision_std": 0.00763, "recall": 0.7743, "recall_std": 0.02884, "f1": 0.78358, "f1_std": 0.01591, "auc": 0.88212, "auc_std": 0.00344}
 
-| Model name | Dataset | Winning config | Retrain mode | Test Accuracy | Test Precision | Test Recall | Test F1 | Test AUROC (mean ± std) | Optimal F1 threshold | Best-val epoch | Cloud bundle URI | Git SHA | Date |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| _(none yet)_ | | | | | | | | | | | | | |
+files under model folder:
+File	Used by predict.py?	When / why
+final_model.ckpt	Always	The weights — torch.load → load_state_dict. No inference without it.
+final_model.config.yaml	Yes (effectively required)	Builds the model architecture before weights can be loaded.
+final_model.json	Only with --threshold optimal-f1	Reads best_f1_threshold from the manifest. Not touched for default/numeric thresholds
 
-How to fill this table + upload the bundle to cloud → [modeling_routine.md → Step 7](modeling_routine.md#step-7--retrain-winning-config-record-final-model-ship-deployment-bundle).
+Biodeg (reaxys free data) without molecular descriptor
+Model: 
+Performance (based on agg/test/best.json):
+{"epoch": 33, "time_epoch": 1.24743, "time_epoch_std": 0.08118, "loss": 0.42486, "loss_std": 0.00755, "lr": 0.0, "lr_std": 0.0, "params": 1252609.0, "params_std": 0.0, "time_iter": 0.04798, "time_iter_std": 0.00312, "accuracy": 0.83354, "accuracy_std": 0.00935, "precision": 0.76992, "precision_std": 0.022, "recall": 0.81604, "recall_std": 0.02369, "f1": 0.79178, "f1_std": 0.00991, "auc": 0.90066, "auc_std": 0.00237}
+
+

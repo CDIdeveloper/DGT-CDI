@@ -16,6 +16,9 @@ CLI
                                                       for regression)
         [--batch-size 64]                            (default: 64)
         [--smiles-col smiles]                        (default: 'smiles')
+        [--label-col <col>]                          (optional; enables metrics)
+        [--plot-dir <dir>]                           (default: <out>_eval/)
+        [--no-plots]                                 (metrics only, with --label-col)
 
 Inference flow
 --------------
@@ -60,6 +63,17 @@ All input columns preserved + appended columns (schema depends on task type):
         y_pred        (float)  predicted target value; NaN for invalid SMILES
         remarks       (str)    empty for successful rows; reason for invalid
 
+Evaluation (optional, --label-col)
+----------------------------------
+When the input CSV carries ground-truth labels, pass `--label-col <col>` to
+also compute performance metrics and the same plot set as analyze_run.py
+(shared `_eval_plots` module): ROC / PR / confusion @ optimal-F1 / score
+histogram for classification; scatter / residuals / residual histogram for
+regression. Only rows with BOTH a valid prediction and a non-null label are
+scored. A `summary.json` (+ PNGs, unless `--no-plots`) is written to
+`--plot-dir` (default: `<output_csv_dir>/<output_stem>_eval/`). Without
+`--label-col`, prediction behaves exactly as before.
+
 Scope
 -----
 - Cuda-only (no --device flag — fails fast if CUDA is unavailable).
@@ -89,6 +103,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Make the sibling _eval_plots module importable regardless of invocation/cwd.
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
 import graphgps  # noqa: E402, F401 — registers custom modules in the GraphGym registry
 
 from graphgps.transform.posenc_stats import compute_posenc_stats  # noqa: E402
@@ -97,6 +116,11 @@ from graphgps.transform.transforms import (  # noqa: E402
     compute_shortest_paths,
     line_graph,
     typecast_x_and_edge_attr,
+)
+
+from _eval_plots import (  # noqa: E402
+    analyze_classification_binary,
+    analyze_regression,
 )
 
 # Atom / bond feature maps — copied verbatim from
@@ -122,7 +146,7 @@ _X_MAP = {
 }
 _E_MAP = {
     'bond_type': [
-        'UNSPECIFIED', 'SINGLE', 'DOUBLE', 'TRIPLE', 'AROMATIC',
+        'misc', 'SINGLE', 'DOUBLE', 'TRIPLE', 'AROMATIC',
     ],
     'stereo': [
         'STEREONONE', 'STEREOZ', 'STEREOE',
@@ -326,6 +350,46 @@ def _run_inference(model, data_list, batch_size, task_type):
     return np.concatenate(preds, axis=0) if preds else np.array([])
 
 
+def _evaluate(df, task_type, label_col, plot_dir: Path, make_plots: bool):
+    """Compute performance metrics (+ optional plots) against ground truth.
+
+    Uses the prediction columns already added to `df` and the ground-truth
+    `label_col`. Evaluates only rows with BOTH a valid prediction and a
+    non-null label. Writes summary.json (+ plots) into `plot_dir`; returns the
+    summary dict, or None if there are no evaluable rows.
+    """
+    if label_col not in df.columns:
+        raise KeyError(
+            f"--label-col '{label_col}' not in input CSV. "
+            f"Available: {list(df.columns)}"
+        )
+    y_true_all = pd.to_numeric(df[label_col], errors='coerce').to_numpy()
+    pred_col = 'y_pred_score' if task_type == 'classification_binary' else 'y_pred'
+    y_pred_all = df[pred_col].to_numpy(dtype=float)
+
+    mask = ~np.isnan(y_true_all) & ~np.isnan(y_pred_all)
+    n_eval = int(mask.sum())
+    if n_eval == 0:
+        print("Warning: no rows with both a valid prediction and a non-null "
+              "label; skipping metrics.")
+        return None
+
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    if task_type == 'classification_binary':
+        summary = analyze_classification_binary(
+            y_true_all[mask], y_pred_all[mask], plot_dir, make_plots=make_plots)
+    else:  # regression
+        summary = analyze_regression(
+            y_true_all[mask], y_pred_all[mask], plot_dir, make_plots=make_plots)
+
+    summary['label_col'] = label_col
+    summary['n_evaluated'] = n_eval
+    summary['n_skipped'] = int(len(df) - n_eval)
+    with open(plot_dir / 'summary.json', 'w') as fh:
+        json.dump(summary, fh, indent=2)
+    return summary
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run DGT inference on new SMILES. "
@@ -353,6 +417,18 @@ def main():
                         help="Inference batch size. Default: 64.")
     parser.add_argument("--smiles-col", type=str, default='smiles',
                         help="Input CSV column holding SMILES. Default: 'smiles'.")
+    parser.add_argument("--label-col", type=str, default=None,
+                        help="Optional. Input CSV column holding ground-truth "
+                             "labels/targets. When given, compute performance "
+                             "metrics (+ plots, same as analyze_run.py) on rows "
+                             "with both a valid prediction and a non-null label.")
+    parser.add_argument("--plot-dir", type=Path, default=None,
+                        help="Where to write the eval summary.json + plots when "
+                             "--label-col is set. Default: <output_csv_dir>/"
+                             "<output_stem>_eval/.")
+    parser.add_argument("--no-plots", action="store_true",
+                        help="With --label-col: compute metrics + write "
+                             "summary.json only, skip the PNG plots.")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -427,6 +503,19 @@ def main():
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output_csv, index=False)
     print(f"Wrote predictions: {args.output_csv}")
+
+    # Optional evaluation: metrics (+ plots) when ground-truth labels are given.
+    if args.label_col is not None:
+        plot_dir = (args.plot_dir.resolve() if args.plot_dir is not None
+                    else args.output_csv.resolve().parent
+                    / f"{args.output_csv.stem}_eval")
+        summary = _evaluate(df, task_type, args.label_col, plot_dir,
+                            make_plots=not args.no_plots)
+        if summary is not None:
+            where = ("summary only (no plots)" if args.no_plots
+                     else "plots + summary")
+            print(f"Evaluation complete ({where}): {plot_dir}")
+            print(json.dumps(summary, indent=2))
 
 
 if __name__ == '__main__':
