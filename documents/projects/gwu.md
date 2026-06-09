@@ -111,7 +111,7 @@ python scripts/select_features_from_shap.py \
   --cumulative 0.90
 ```
 Paste the printed `desc_dim` + `desc_columns` into a copy of `...-WithDesc-gwu.yaml`
-(remove `desc_include`/`desc_exclude`). Each distinct selection auto-keys its own
+(remove `desc_include`/`desc_exclude`). Repeat as Variant 3 as above. Each distinct selection auto-keys its own
 processed cache (hash of the resolved columns), so variants never collide.
 (For reference, on the **QM-only** ranking — 40 feats — cumulative 0.90→24, 0.95→28; the qm_rdkit ranking covers all ~247 and will give different counts — the script prints the count + coverage.)
 **SHAP caveats:** importance is model-specific (analysis model ≠ DGT) and must be
