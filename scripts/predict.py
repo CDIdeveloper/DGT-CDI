@@ -8,7 +8,7 @@ CLI
 ---
     python scripts/predict.py \\
         --ckpt        <path/to/final_model.ckpt>     (required)
-        --smiles-csv  <input.csv|.parquet|s3://...>  (required; csv/parquet, local or s3)
+        --smiles-csv  <input.csv|.parquet|s3://...>  (required; csv/parquet, local or s3, for prediction with descriptors, col shall cover, can be more, columns in final_model.json)
         --output-csv  <output.csv>                   (required)
         [--orig-config <path>]                       (default: auto-discover)
         [--threshold  0.5 | optimal-f1]              (classification-only;
