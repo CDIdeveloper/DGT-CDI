@@ -34,7 +34,7 @@ Anchor points:
 | **Network** (model wiring) | parallel alternative | `GPSModel` | [dgt_model.py](../graphgps/network/dgt_model.py): `DGTModel`, `DGTModel3D` registered via `@register_network('DGTModel'…)`; adds `NodeEdgeEncoder` (atom↔bond mutual fusion) and `PositionEncoder` (Bessel + spherical harmonics for 3D) |
 | **Encoders** (node / edge / PE) | additive registration | RWSE, LapPE, SignNet, linear node/edge | [topology_edge_encoder.py](../graphgps/encoder/topology_edge_encoder.py) for SPDE, [relative_pe_encoder.py](../graphgps/encoder/relative_pe_encoder.py) for pairwise positional features, composed encoders (`LinearEdge+RWSE-SPDE`) registered alongside the originals |
 | **Transforms** (pre-compute) | additive registration | RWSE / Laplacian PE precomputation | `add_rings` (RSE), `compute_shortest_paths` (SPDE), `line_graph` (atom→bond graph) in [transform/transforms.py](../graphgps/transform/transforms.py) |
-| **Head** (readout) | parallel alternative | `san_graph`, OGB heads | `line_graph` head — pools atom and bond representations separately, concatenates, then MLP — in [graphgps/head/](../graphgps/head/) |
+| **Head** (readout) | parallel alternative | `san_graph`, OGB heads | `line_graph` head — pools atom and bond representations separately, concatenates, then MLP — in [graphgps/head/](../graphgps/head/); plus the `line_graph_with_desc` variant that late-fuses molecular descriptors (Phase 2, see [Stage 4](#stage-4--readout-line_graph-head-in-graphgpshead)) |
 | **Loader** | additive registration | OGB, PyG datasets, ZINC, etc. | `chiral3d_molecule_net`, `aqsol_molecules` added under [graphgps/loader/dataset/](../graphgps/loader/dataset/); QM9 scaffold splits under [datasets/QM9_split/](../datasets/QM9_split/) |
 | **Loss** | additive registration | Standard CE / MSE | Multilabel focal / weighted variants in [graphgps/loss/](../graphgps/loss/) |
 | **Config schema** | additive registration | `cfg.gt.*`, `cfg.posenc_*` | Extra fields under `cfg.dataset.spd`, `cfg.dataset.rings`, `cfg.dataset.spd_max_length`, etc., defined in [graphgps/config/](../graphgps/config/) |
@@ -284,6 +284,20 @@ batch.e [M, D] ──GAP per molecule──▶ X^b_pool [B, D]
      ▼
    loss(logits, y)   ← cross-entropy / MSE / L1 / focal / weighted variants
 ```
+
+**`line_graph_with_desc` variant (Phase 2 — molecular-descriptor late fusion).** Selected with `gnn.head: line_graph_with_desc`. Identical to `line_graph` up to the pooled `[X^a_pool ‖ X^b_pool]` vector, but a projected molecular-descriptor vector is concatenated **after the readout (pooling)**, just before the final `out_layer`:
+
+```
+batch.desc [B, desc_dim] ──f(desc)──▶ D_proj [B, desc_proj_dim]
+   f(desc) = Linear(dataset.desc_dim → gnn.desc_proj_dim) → GELU
+
+concat( X^a_pool ‖ X^b_pool ‖ D_proj )  [B, 2D + desc_proj_dim]
+   │  out_layer: Linear(2D + desc_proj_dim → C)
+   ▼
+logits [B, C]
+```
+
+Descriptors are graph-level (`batch.desc` rides PyG collation as `[B, desc_dim]`) and **never** pass through the encoders/attention/backbone — only this head reads them ([san_graph.py](../graphgps/head/san_graph.py), `MOLECULAR DESCRIPTORS CONSUMED HERE` marker). `desc_proj_dim` (default 128) is a model-only knob — sweeping it does not invalidate the descriptor cache. The head asserts `batch.desc.size(1) == cfg.dataset.desc_dim` and fails loudly on a mismatch. Descriptor standardisation + column selection happen upstream in the loader (see [Data lineage](#data-lineage--raw--cache--model--prediction) and [config_reference.md](config_reference.md#molecular-descriptor-fields-phase-2)).
 
 ### One-glance summary
 

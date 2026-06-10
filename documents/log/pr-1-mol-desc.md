@@ -7,7 +7,7 @@
 - Title: Molecular descriptor plumbing (late fusion at the head)
 - Head branch: mol-desc
 - Base branch: main
-- Status: In progress — Phase-2 pipeline (A–E) + gwu study (5/5) + **group G (predict.py descriptors)** complete. Deferred: docs (group F); descriptors-only MLP baseline; trained_models.md final-model row. Follow-up: `desc_proj_dim`/`dim_hidden` exploration (#6).
+- Status: **Complete — ready to merge.** Phase-2 pipeline (A–E) + gwu study (5/5) + group G (predict.py descriptors) + **group F (docs)** all done; trained_models.md final-model row added. Descriptors-only MLP baseline moved to overview.md → Future work. Follow-up: `desc_proj_dim`/`dim_hidden` exploration (#6).
 - Related ADRs:
   - [../adr/0001-pr-mol-desc.md](../adr/0001-pr-mol-desc.md)
 
@@ -16,49 +16,51 @@ One paragraph: add a `line_graph_with_desc` readout head that concatenates the s
 
 ## TODO (PR checklist)
 
+> **Status (2026-06-10):** Groups **A, B, C, D, E, F, G = DONE** (+ descriptor-selection extension + gwu study + S3/parquet predict input). trained_models.md final-model row added. Descriptors-only MLP baseline moved to overview.md → Future work. **All checklist items below are ticked; PR is ready to merge.**
+
 **Implementation order:** A (config) → B (loader standardisation) → C (head) → D (minimal test) → E (WithDesc config + 3-epoch dry-run) → G (predict.py descriptors) → F (docs). The group-E dry-run is the primary integration check.
 
 ### A. Config plumbing (do first — GraphGym rejects unknown YAML keys)
-- [ ] Register `cfg.dataset.desc_dim` (int, default `0`) in [graphgps/config/dataset_config.py](../../graphgps/config/dataset_config.py).
-- [ ] Register `cfg.dataset.standardize_desc` (bool, default `False`) in the same file — when True, the loader z-scores desc and writes a **distinct** processed cache (separate from the baseline's raw cache).
-- [ ] Register `cfg.gnn.desc_proj_dim` (int, default `128`) — output dim of the head's descriptor MLP `f(desc)`; the **tunable** knob to modulate descriptor influence (model-only → no cache invalidation when swept).
-- [ ] Sanity: a config setting `dataset.desc_dim: 216` + `dataset.standardize_desc: True` + `gnn.desc_proj_dim: 128` loads without a yacs error.
+- [x] Register `cfg.dataset.desc_dim` (int, default `0`) in [graphgps/config/dataset_config.py](../../graphgps/config/dataset_config.py).
+- [x] Register `cfg.dataset.standardize_desc` (bool, default `False`) in the same file — when True, the loader z-scores desc and writes a **distinct** processed cache (separate from the baseline's raw cache).
+- [x] Register `cfg.gnn.desc_proj_dim` (int, default `128`) — output dim of the head's descriptor MLP `f(desc)`; the **tunable** knob to modulate descriptor influence (model-only → no cache invalidation when swept).
+- [x] Sanity: a config setting `dataset.desc_dim: 216` + `dataset.standardize_desc: True` + `gnn.desc_proj_dim: 128` loads without a yacs error.
 
 ### B. Descriptor standardisation — RESOLVED 2026-06-09 (Option A; see ADR)
-- [ ] In `process()` ([biodeg.py](../../graphgps/loader/dataset/biodeg.py) + [biodeg_gwu.py](../../graphgps/loader/dataset/biodeg_gwu.py)): compute z-score μ/σ from the **train split only**; apply to all splits; guard zero-variance cols (`std + eps`).
-- [ ] Persist μ/σ **and descriptor column NAMES** to a per-dataset `desc_stats.json`.
-- [ ] Write the normalised result to a **separate processed cache** — do NOT overwrite / `rm` the baseline's raw-desc cache (new model → new cache). Mechanism TBD in group A/E (config-driven; see open item).
-- [ ] At retrain, propagate `descriptor_columns` + `desc_stats` into `final_model.json` (predict.py becomes self-contained). (Inference handling → group G.)
+- [x] In `process()` ([biodeg.py](../../graphgps/loader/dataset/biodeg.py) + [biodeg_gwu.py](../../graphgps/loader/dataset/biodeg_gwu.py)): compute z-score μ/σ from the **train split only**; apply to all splits; guard zero-variance cols (`std + eps`).
+- [x] Persist μ/σ **and descriptor column NAMES** to a per-dataset `desc_stats.json`.
+- [x] Write the normalised result to a **separate processed cache** — do NOT overwrite / `rm` the baseline's raw-desc cache (new model → new cache). Mechanism TBD in group A/E (config-driven; see open item).
+- [x] At retrain, propagate `descriptor_columns` + `desc_stats` into `final_model.json` (predict.py becomes self-contained). (Inference handling → group G.)
 
 ### C. DescriptorGraphHead
-- [ ] Add `DescriptorGraphHead` under [graphgps/head/](../../graphgps/head/), mirroring `LineGraphHead` ([san_graph.py:57](../../graphgps/head/san_graph.py#L57)). Keep the per-node FC layers + atom/bond pooling **identical**; the descriptor enters **after the readout (pooling)** — concat `f(desc)` with the pooled `[atom ‖ bond]` vector just before `out_layer` (matches the DGT author's "add after the readout").
-- [ ] Descriptor MLP `f(desc)` = `Linear(cfg.dataset.desc_dim → cfg.gnn.desc_proj_dim) → GELU`. `out_layer` input dim becomes `2·(dim_in // 2**L) + desc_proj_dim`.
-- [ ] Register `@register_head('line_graph_with_desc')`.
-- [ ] Add `MOLECULAR DESCRIPTORS CONSUMED HERE` marker at the `batch.desc` read site.
-- [ ] Verify marker invariant: `grep -rn 'MOLECULAR DESCRIPTORS' graphgps/ scripts/` → exactly 2 ENTER (biodeg + biodeg_gwu) + 1 CONSUMED.
+- [x] Add `DescriptorGraphHead` under [graphgps/head/](../../graphgps/head/), mirroring `LineGraphHead` ([san_graph.py:57](../../graphgps/head/san_graph.py#L57)). Keep the per-node FC layers + atom/bond pooling **identical**; the descriptor enters **after the readout (pooling)** — concat `f(desc)` with the pooled `[atom ‖ bond]` vector just before `out_layer` (matches the DGT author's "add after the readout").
+- [x] Descriptor MLP `f(desc)` = `Linear(cfg.dataset.desc_dim → cfg.gnn.desc_proj_dim) → GELU`. `out_layer` input dim becomes `2·(dim_in // 2**L) + desc_proj_dim`.
+- [x] Register `@register_head('line_graph_with_desc')`.
+- [x] Add `MOLECULAR DESCRIPTORS CONSUMED HERE` marker at the `batch.desc` read site.
+- [x] Verify marker invariant: `grep -rn 'MOLECULAR DESCRIPTORS' graphgps/ scripts/` → exactly 2 ENTER (biodeg + biodeg_gwu) + 1 CONSUMED.
 
 ### D. Tests (kept minimal — primary verification is the group-E dry-run)
-- [ ] **One cheap unit test** `tests/test_descriptor_head.py`: instantiate `line_graph_with_desc`, forward a toy batch, assert output `[B, C]`, assert both `line_graph` + `line_graph_with_desc` register. Runs in seconds, no GPU; catches head shape bugs that are painful to diagnose from a full run.
-- [ ] After the loader change, re-run existing `pytest -rP tests/test_dataset.py` **once** (confirms standardisation didn't break the loaders / desc stays finite).
-- [ ] Everything else: rely on the end-to-end 3-epoch dry-run (group E). No per-step tests; broader checking deferred to the full 4-seed run.
+- [x] **One cheap unit test** `tests/test_descriptor_head.py`: instantiate `line_graph_with_desc`, forward a toy batch, assert output `[B, C]`, assert both `line_graph` + `line_graph_with_desc` register. Runs in seconds, no GPU; catches head shape bugs that are painful to diagnose from a full run.
+- [x] After the loader change, re-run existing `pytest -rP tests/test_dataset.py` **once** (confirms standardisation didn't break the loaders / desc stays finite).
+- [x] Everything else: rely on the end-to-end 3-epoch dry-run (group E). No per-step tests; broader checking deferred to the full 4-seed run.
 
 ### E. Config + end-to-end smoke (bridges into Phase 3)
-- [ ] `configs/biodegradability/Biodeg-DGT-Pipeline-WithDesc.yaml` — `gnn.head: line_graph_with_desc`, `dataset.desc_dim: 216`, `dataset.standardize_desc: True`. (Baseline `Biodeg-DGT-Pipeline.yaml` stays untouched.)
-- [ ] (Optional) `Biodeg-GWU-DGT-Pipeline-WithDesc.yaml` — `dataset.desc_dim: 247`, `dataset.standardize_desc: True`.
-- [ ] 3-epoch dry-run confirms the pipeline runs with the desc head (exit 0, val AUC > 0.5).
+- [x] `configs/biodegradability/Biodeg-DGT-Pipeline-WithDesc.yaml` — `gnn.head: line_graph_with_desc`, `dataset.desc_dim: 216`, `dataset.standardize_desc: True`. (Baseline `Biodeg-DGT-Pipeline.yaml` stays untouched.)
+- [x] (Optional) `Biodeg-GWU-DGT-Pipeline-WithDesc.yaml` — `dataset.desc_dim: 247`, `dataset.standardize_desc: True`.
+- [x] 3-epoch dry-run confirms the pipeline runs with the desc head (exit 0, val AUC > 0.5).
 
 ### G. Inference with descriptors (predict.py, WithDesc model only)
-- [ ] Input CSV must carry the descriptor columns — descriptors are **not** derivable from SMILES (esp. biodeg_gwu QM features); predict.py reads them from the CSV, not from RDKit.
-- [ ] Validate input descriptor columns against `final_model.json` → `descriptor_columns`: error listing any **missing** required columns; warn on extras.
-- [ ] **Reorder** input descriptor columns to the exact **training order** before building `Data.desc` (column order matters to the model; name-based reorder makes the user's CSV column order irrelevant as long as all named columns are present).
-- [ ] Apply persisted `desc_stats` (μ/σ) from `final_model.json` — identical normalisation to training.
-- [ ] Branch on the bundle's config: only the `gnn.head: line_graph_with_desc` path consumes descriptors; the baseline SMILES-only path is unchanged.
+- [x] Input CSV must carry the descriptor columns — descriptors are **not** derivable from SMILES (esp. biodeg_gwu QM features); predict.py reads them from the CSV, not from RDKit.
+- [x] Validate input descriptor columns against `final_model.json` → `descriptor_columns`: error listing any **missing** required columns; warn on extras.
+- [x] **Reorder** input descriptor columns to the exact **training order** before building `Data.desc` (column order matters to the model; name-based reorder makes the user's CSV column order irrelevant as long as all named columns are present).
+- [x] Apply persisted `desc_stats` (μ/σ) from `final_model.json` — identical normalisation to training.
+- [x] Branch on the bundle's config: only the `gnn.head: line_graph_with_desc` path consumes descriptors; the baseline SMILES-only path is unchanged.
 
 ### F. Docs
-- [ ] Tick [overview.md → Phase 2](../overview.md#phase-2--descriptor-plumbing-late-fusion) checkboxes as completed.
-- [ ] [tech.md](../tech.md) — add the desc flow + `line_graph_with_desc` readout variant (Stage 4).
-- [ ] [config_reference.md](../config_reference.md) — document `dataset.desc_dim` + the new head value.
-- [ ] [session_state.md](../session_state.md) — update at end of session.
+- [x] Tick [overview.md → Phase 2](../overview.md#phase-2--descriptor-plumbing-late-fusion) checkboxes as completed.
+- [x] [tech.md](../tech.md) — add the desc flow + `line_graph_with_desc` readout variant (Stage 4).
+- [x] [config_reference.md](../config_reference.md) — document `dataset.desc_dim` + the new head value.
+- [x] [session_state.md](../session_state.md) — update at end of session.
 
 ## Context
 - Problem / motivation: incorporate molecular descriptors into DGT to test whether they add signal on top of graph features (Phase 2 → Phase 4 ablation).
@@ -124,10 +126,16 @@ Descriptor columns are **positional** — everything after the first `id_column_
 - **predict.py:** if `gnn.head == line_graph_with_desc`, reads `descriptor_columns` + `desc_stats` from the manifest, validates the input CSV has those columns, **reorders by name to training order**, applies the persisted z-score, and attaches `data.desc`. Rows with missing/non-finite descriptors are skipped with a `remarks` note. SMILES-only models unchanged. Docstring updated.
 - **Verify on remote:** after `retrain_on_trainval.py` on a WithDesc run, `final_model.json` has `descriptor_columns`/`desc_stats`; `predict.py` on a CSV containing those descriptor columns produces scores (and errors clearly if columns are missing).
 
-## Still pending (next session)
-- **Group F — docs:** tech.md (`line_graph_with_desc` head in Stage 4), config_reference.md (`dataset.desc_dim` / `standardize_desc` / `desc_include`/`exclude`/`columns`, `gnn.desc_proj_dim`).
-- **Phase 4 leftover:** descriptors-only MLP sanity baseline; record non-GWU winner in trained_models.md (retrain in progress).
-- **#6 `dim_hidden` exploration.**
+## Group F — docs — DONE (2026-06-10)
+- **tech.md:** Stage-4 readout documents the `line_graph_with_desc` variant (`f(desc)=Linear(desc_dim→desc_proj_dim)→GELU` concat with pooled `[atom ‖ bond]` before `out_layer`; descriptors never enter the backbone); Head row in the GraphGPS-integration table updated.
+- **config_reference.md:** `gnn.head` comment updated ("(planned)" → implemented); new "Molecular descriptor fields (Phase 2)" subsection for `dataset.desc_dim` / `standardize_desc` / `desc_include`/`exclude`/`columns` + `gnn.desc_proj_dim`, with cache-invalidation notes.
+- **trained_models.md:** new "Final model with molecular descriptor" section — non-GWU/RDKit winner (AUC 0.9004 ± 0.0004) + the predict.py deployment-bundle contract.
+- **overview.md:** Phase 2/3/4 already marked done (prior session).
+
+## Out of scope for PR-1 (tracked elsewhere)
+- **Descriptors-only MLP sanity baseline** → moved to overview.md → Future work.
+- **#6 `dim_hidden` / `desc_proj_dim` exploration** → [projects/gwu.md](../projects/gwu.md) TODO #6.
+- **(optional)** repeat the descriptor-type study on biodeg (no-Reaxys).
 
 ## Open items to confirm
 - ~~Separate-cache mechanism~~ — **RESOLVED 2026-06-09:** config flag `dataset.standardize_desc: True` (group A) makes the loader normalise + write a distinct `processed_file_names` (e.g. `data_stdesc.pt`), coexisting with the baseline's raw cache under one root. The new config is named with a `-WithDesc` suffix; the baseline config is untouched.

@@ -253,8 +253,9 @@ gt:
 gnn:
   head: line_graph
   # Readout head. `line_graph`: pool atom and bond reps separately,
-  # concat, then MLP → logits. Phase-2 `line_graph_with_desc` will
-  # additionally concat molecular descriptors before the MLP (planned).
+  # concat, then MLP → logits. `line_graph_with_desc` (Phase 2)
+  # additionally concats a projected molecular-descriptor vector before
+  # the MLP — see "Molecular descriptor fields" below.
   # **Note on naming:** the field lives under `gnn.*` for GraphGym
   # historical reasons (the framework groups all model-side config there
   # regardless of whether the architecture is actually an MPNN). It does
@@ -320,6 +321,65 @@ optim:
   # Convention: ~10% of max_epoch. Too short = early-step instability;
   # too long = wasted budget at low LR.
 ```
+
+## Molecular descriptor fields (Phase 2)
+
+Late-fusion of per-molecule descriptors at the readout head. **None of these
+appear in the BBBP / FreeSolv worked examples above** — they default to "off"
+(`desc_dim: 0`, `standardize_desc: False`, empty selection lists), so the
+baseline configs are unaffected. Enable them together with
+`gnn.head: line_graph_with_desc`. Registered in
+[dataset_config.py](../graphgps/config/dataset_config.py) /
+[custom_gnn_config.py](../graphgps/config/custom_gnn_config.py); consumed by the
+`line_graph_with_desc` head ([san_graph.py](../graphgps/head/san_graph.py)).
+Example configs: `configs/biodegradability/*-WithDesc{,-gwu,-nongwu}.yaml`.
+
+```yaml
+dataset:
+  desc_dim: 207
+  # Width of the per-molecule descriptor vector (Data.desc) the head expects.
+  # 0 = no descriptors (baseline). Set to the dataset's full descriptor count
+  # (biodeg=216, biodeg_gwu=247) OR to the SELECTED count when using the
+  # desc_include/exclude/columns knobs below. The head asserts
+  # batch.desc.size(1) == desc_dim and fails loudly on a mismatch, so a wrong
+  # value here is caught immediately rather than training on garbage.
+
+  standardize_desc: True
+  # When True, the loader z-scores descriptors using TRAIN-split μ/σ (zero-var
+  # cols guarded with std+eps), writes a SEPARATE processed cache (the
+  # baseline's raw-desc cache is preserved — no rm needed), and persists the
+  # μ/σ + column NAMES to desc_stats{suffix}.json. retrain_on_trainval.py then
+  # embeds those into final_model.json so predict.py re-applies the identical
+  # normalisation (leak-free val/test/inference). Leave True for any desc model.
+
+  # --- Descriptor-column selection (optional; descriptor-type studies) ---
+  # Precedence: desc_columns (explicit) > desc_include/desc_exclude (substring)
+  # > all columns; desc_exclude is always applied last. Any NON-EMPTY selection
+  # auto-keys its OWN processed cache `data_stdesc_<hash8>.pt` (hash of the
+  # resolved, ordered column list) — subsets never collide with each other or
+  # with the all-descriptor `data_stdesc.pt`. Remember to set desc_dim to the
+  # resulting count.
+  desc_include: []            # keep cols containing ANY substring, e.g. ['_gwu']
+  desc_exclude: ['_gwu']      # drop cols containing ANY substring (non-GWU set)
+  desc_columns: []            # explicit exact column names (e.g. a SHAP subset)
+
+gnn:
+  desc_proj_dim: 128
+  # Output width of the head's descriptor projection f(desc) =
+  # Linear(dataset.desc_dim → desc_proj_dim) → GELU, concatenated with the
+  # pooled [atom ‖ bond] vector before out_layer. The tunable knob to modulate
+  # the descriptor channel's influence. **Model-only** — sweeping it does NOT
+  # invalidate the processed cache (unlike the dataset.* fields above). Only
+  # used when gnn.head = line_graph_with_desc.
+```
+
+**Cache invalidation note.** `desc_dim` / `standardize_desc` / the three
+selection fields are **data-processing** knobs — changing them changes which
+`processed/data_stdesc*.pt` cache is read or built. They do *not* require a
+manual `rm` for a *new* selection (each keys its own cache), but if you rebuild
+an existing selection after a loader change, delete that hash's cache first (see
+[session_state.md](session_state.md) → Known gotchas). `desc_proj_dim` is
+model-only and never needs cache invalidation.
 
 ## How to use this reference
 

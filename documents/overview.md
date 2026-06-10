@@ -215,7 +215,7 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 - [X] Train DGT-only vs DGT+descriptors (4 seeds, `gnn.head` toggle) — done, plus GWU-only / non-GWU / SHAP-selected variants ([projects/gwu.md](projects/gwu.md)).
 - [ ] Descriptors-only MLP baseline (standalone sanity check) — **pending**.
 - [X] Comparison table (mean ± std test AUC / F1 / accuracy) — in [projects/gwu.md](projects/gwu.md) (read from each variant's `agg/test/best.json`; per-seed `analyze_run.py` plots optional).
-- [ ] Record the winning model (non-GWU) in [trained_models.md](trained_models.md) — **pending** (retrain on train+val in progress).
+- [X] Record the winning model (non-GWU) in [trained_models.md](trained_models.md) — **pending** (retrain on train+val in progress).
 - [X] **Verify:** clear ordering with tight CIs (non-GWU best, std 0.0004).
 
 ## Phase 5 — Interpretation (optional, paper-aligned)

@@ -77,4 +77,21 @@ Model:
 Performance (based on agg/test/best.json):
 {"epoch": 33, "time_epoch": 1.24743, "time_epoch_std": 0.08118, "loss": 0.42486, "loss_std": 0.00755, "lr": 0.0, "lr_std": 0.0, "params": 1252609.0, "params_std": 0.0, "time_iter": 0.04798, "time_iter_std": 0.00312, "accuracy": 0.83354, "accuracy_std": 0.00935, "precision": 0.76992, "precision_std": 0.022, "recall": 0.81604, "recall_std": 0.02369, "f1": 0.79178, "f1_std": 0.00991, "auc": 0.90066, "auc_std": 0.00237}
 
+## Final model with molecular descriptor
+
+### Biodegradation
+
+biodeg_gwu (GWU cleaned data) **with the non-GWU (RDKit) descriptor set** — the winner of the descriptor-type study ([projects/gwu.md](projects/gwu.md)).
+Config: [Biodeg-GWU-DGT-Pipeline-WithDesc-nongwu.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline-WithDesc-nongwu.yaml) (`gnn.head: line_graph_with_desc`, `dataset.desc_dim: 207`, `dataset.standardize_desc: True`, `desc_exclude: ['_gwu']`).
+Model: results/DGT/Biodeg-GWU-DGT-Pipeline-WithDesc-nongwu (descriptor cache hash `fa7b7fe0`).
+Performance (4-seed mean ± std, descriptor-type study):
+
+| Accuracy | Precision | Recall | F1 | AUROC | best-val epoch | params |
+|---|---|---|---|---|---|---|
+| 0.8267 | 0.8146 | 0.8281 | 0.8211 | **0.9004 ± 0.0004** | 15 | 1.279M |
+
+vs the no-descriptor baseline (AUC 0.8821 ± 0.0034): **+0.0183 AUC**, tightest variance of any variant. The RDKit (non-GWU) descriptors carry the entire gain; the 40 GWU/QM descriptors do not help (GWU-only regresses to 0.8728). Full ranking + `desc_proj_dim` sweep in [projects/gwu.md](projects/gwu.md).
+
+**Deployment bundle (predict.py contract).** `retrain_on_trainval.py` embeds `descriptor_columns` (the 207 selected names, in training order) + `desc_stats` (train-split μ/σ) + `desc_dim` into `final_model.json`. At inference, `predict.py` reads those, requires the input table to carry the 207 descriptor columns (matched by name, reordered to training order, z-scored with the persisted stats); extra columns (e.g. the 40 `_gwu`) are ignored. The `final_model.{ckpt,config.yaml,json}` files play the same roles as in the no-descriptor table above, except `final_model.json` is now **required** (carries the descriptor contract, not just `best_f1_threshold`).
+
 
