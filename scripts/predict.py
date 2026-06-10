@@ -8,7 +8,7 @@ CLI
 ---
     python scripts/predict.py \\
         --ckpt        <path/to/final_model.ckpt>     (required)
-        --smiles-csv  <input.csv>                    (required)
+        --smiles-csv  <input.csv|.parquet|s3://...>  (required; csv/parquet, local or s3)
         --output-csv  <output.csv>                   (required)
         [--orig-config <path>]                       (default: auto-discover)
         [--threshold  0.5 | optimal-f1]              (classification-only;
@@ -34,8 +34,9 @@ Inference flow
       - 'optimal-f1'  → read 'best_f1_threshold' from
                         <ckpt_dir>/<ckpt_stem>.json (manifest written by
                         retrain_on_trainval.py).
-4.  Read input CSV (pandas). Per row: parse SMILES with RDKit; invalid rows
-    get NaN + a reason string and are skipped during inference.
+4.  Read input table (CSV or Parquet; local path or s3:// URI) with pandas
+    (s3:// handled via s3fs, like the trans_learn loaders). Per row: parse
+    SMILES with RDKit; invalid rows get NaN + a reason string and are skipped.
 5.  Featurise valid SMILES with the SAME atom / bond featurisation as
     torch_geometric.datasets.MoleculeNet (copied inline below so this script
     is independent of the PyG version's utils namespace), then apply the
@@ -304,6 +305,20 @@ def _load_desc_spec(ckpt_path: Path):
     return cols, mean, std
 
 
+def _read_input_table(path: str) -> pd.DataFrame:
+    """Read the input table from a local path or an ``s3://`` URI.
+
+    Format is dispatched by extension: ``.parquet`` -> ``read_parquet``,
+    otherwise ``read_csv``. pandas handles ``s3://`` transparently via s3fs
+    (same mechanism the trans_learn loaders use), so no extra args/creds are
+    needed beyond the AWS credentials already configured in the environment.
+    """
+    p = str(path)
+    if p.lower().endswith('.parquet'):
+        return pd.read_parquet(p)
+    return pd.read_csv(p)
+
+
 def _bootstrap_cfg(orig_config: Path) -> None:
     """Initialise GraphGym's global cfg from a pristine YAML."""
     set_cfg(cfg)
@@ -445,8 +460,11 @@ def main():
     )
     parser.add_argument("--ckpt", type=Path, required=True,
                         help="Path to a trained .ckpt file.")
-    parser.add_argument("--smiles-csv", type=Path, required=True,
-                        help="Input CSV; must contain the SMILES column.")
+    parser.add_argument("--smiles-csv", type=str, required=True,
+                        help="Input table — local path OR s3:// URI; .csv or "
+                             ".parquet (by extension). Must contain the SMILES "
+                             "column (and, for line_graph_with_desc models, the "
+                             "descriptor columns).")
     parser.add_argument("--output-csv", type=Path, required=True,
                         help="Output CSV path.")
     parser.add_argument("--orig-config", type=Path, default=None,
@@ -507,7 +525,8 @@ def main():
             f"Currently: 'classification_binary' and 'regression'."
         )
 
-    df = pd.read_csv(args.smiles_csv)
+    df = _read_input_table(args.smiles_csv)
+    print(f"Read {len(df)} rows from {args.smiles_csv}")
     if args.smiles_col not in df.columns:
         raise KeyError(
             f"Column '{args.smiles_col}' not in input CSV. "
