@@ -156,7 +156,8 @@ class Biodeg(InMemoryDataset):
             desc_std = train_only.std(axis=0)
             # Constant columns (std~0): set std=1 so (x-mean)=0 maps to 0.
             desc_std = np.where(desc_std < 1e-8, 1.0, desc_std)
-            stats_path = osp.join(self.processed_dir, 'desc_stats.json')
+            stats_path = osp.join(
+                self.processed_dir, f'desc_stats{self._cache_suffix}.json')
             with open(stats_path, 'w') as fh:
                 json.dump({
                     'descriptor_columns': list(descriptor_cols),

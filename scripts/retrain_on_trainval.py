@@ -117,6 +117,53 @@ def _pick_median_seed(run_dir: Path, metric: str):
     return chosen, per_seed[chosen], per_seed, median
 
 
+def _load_descriptor_info(cfg: dict) -> dict:
+    """Resolve descriptor_columns + desc_stats (train-split mean/std) for a
+    `line_graph_with_desc` model, so they can be embedded in the deployment
+    manifest (predict.py is then self-contained — no dataset at inference).
+
+    Locates the dataset's suffix-keyed desc_stats file from the (resolved)
+    dumped config + its descriptor-selection spec — mirroring the loader's cache
+    keying (graphgps/loader/dataset/_desc_select.py).
+    """
+    ds = cfg.get('dataset', {})
+    pyg_id = ds['format'].split('-', 1)[1]
+    ds_root = Path(ds.get('dir', 'datasets')) / pyg_id
+    if not ds_root.is_absolute():
+        ds_root = REPO_ROOT / ds_root
+
+    # _desc_select only uses hashlib — import the file directly (no heavy
+    # graphgps package import).
+    sys.path.insert(0, str(REPO_ROOT / 'graphgps' / 'loader' / 'dataset'))
+    from _desc_select import select_descriptor_columns, selection_tag
+
+    with open(ds_root / 'raw' / 'manifest.json') as fh:
+        all_cols = json.load(fh)['descriptor_columns']
+    inc = ds.get('desc_include') or []
+    exc = ds.get('desc_exclude') or []
+    cols = ds.get('desc_columns') or []
+    if inc or exc or cols:
+        selected = select_descriptor_columns(all_cols, inc, exc, cols)
+        suffix = '_' + selection_tag(selected)
+    else:
+        suffix = ''
+    stats_path = ds_root / 'processed' / f'desc_stats{suffix}.json'
+    if not stats_path.is_file():
+        raise FileNotFoundError(
+            f"line_graph_with_desc model but descriptor stats not found at "
+            f"{stats_path}. The training run must have used "
+            f"dataset.standardize_desc: True. Cannot embed descriptor info into "
+            f"the deployment manifest."
+        )
+    with open(stats_path) as fh:
+        stats = json.load(fh)
+    return {
+        'descriptor_columns': stats['descriptor_columns'],
+        'desc_dim': stats['desc_dim'],
+        'desc_stats': {'mean': stats['mean'], 'std': stats['std']},
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Retrain on train+val (or train+val+test) combined using "
@@ -247,6 +294,14 @@ def main():
               f"on results/.../{chosen}/ before retraining if you want "
               "predict.py --threshold optimal-f1 to work.")
 
+    # 4c. For descriptor-fusion models, embed descriptor_columns + desc_stats so
+    # predict.py is self-contained at inference (no dataset needed).
+    descriptor_info = {}
+    if cfg.get('gnn', {}).get('head') == 'line_graph_with_desc':
+        descriptor_info = _load_descriptor_info(cfg)
+        print(f"Embedding descriptor spec into manifest: "
+              f"{descriptor_info['desc_dim']} columns.")
+
     # 5. Write a tiny manifest for downstream consumers.
     manifest = {
         'source_run': str(run_dir),
@@ -273,6 +328,7 @@ def main():
             'Trained on train+val combined; test set was held out.'
         ),
     }
+    manifest.update(descriptor_info)
     manifest_path = run_dir / f'final_model{suffix}.json'
     with open(manifest_path, 'w') as fh:
         json.dump(manifest, fh, indent=2)

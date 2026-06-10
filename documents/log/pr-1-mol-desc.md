@@ -7,7 +7,7 @@
 - Title: Molecular descriptor plumbing (late fusion at the head)
 - Head branch: mol-desc
 - Base branch: main
-- Status: In progress — Phase-2 pipeline (A–E) + gwu descriptor-type study (5/5) complete. Deferred: predict.py descriptor path (group G) + retrain `desc_stats`→`final_model.json` + docs (group F). Follow-up: `dim_hidden` exploration (#6).
+- Status: In progress — Phase-2 pipeline (A–E) + gwu study (5/5) + **group G (predict.py descriptors)** complete. Deferred: docs (group F); descriptors-only MLP baseline; trained_models.md final-model row. Follow-up: `desc_proj_dim`/`dim_hidden` exploration (#6).
 - Related ADRs:
   - [../adr/0001-pr-mol-desc.md](../adr/0001-pr-mol-desc.md)
 
@@ -118,8 +118,13 @@ Descriptor columns are **positional** — everything after the first `id_column_
 - **2026-06-10 — gwu descriptor-type study COMPLETE (5/5).** Ordering by test AUC: non-GWU 0.9004 ± 0.0004 (+0.0183) > all 0.8966 > SHAP-selected-94 0.8864 > baseline 0.8821 > GWU-only 0.8728 (−0.0093). Conclusion: the RDKit (non-GWU) descriptors carry the gain; GWU/QM descriptors don't help. overview.md Phase 2/3/4 marked done; results in [projects/gwu.md](../projects/gwu.md).
 - **2026-06-10 — Follow-up #6: `dim_hidden` exploration.** Try lower `gt.dim_hidden` (must equal `gnn.dim_inner`) — motivated by small descriptor sets (e.g. GWU-only = 40). Tracked in [projects/gwu.md](../projects/gwu.md) TODO #6.
 
+## Group G — predict.py descriptors — DONE (2026-06-10)
+- **Loader fix:** `desc_stats.json` is now **selection-keyed** (`desc_stats{suffix}.json`) so multiple subsets don't overwrite one stats file (was a latent collision bug).
+- **retrain_on_trainval.py:** for `line_graph_with_desc` models, resolves the dataset's suffix-keyed `desc_stats` (via the same `_desc_select` keying) and embeds `descriptor_columns` + `desc_stats` (mean/std) + `desc_dim` into `final_model.json`.
+- **predict.py:** if `gnn.head == line_graph_with_desc`, reads `descriptor_columns` + `desc_stats` from the manifest, validates the input CSV has those columns, **reorders by name to training order**, applies the persisted z-score, and attaches `data.desc`. Rows with missing/non-finite descriptors are skipped with a `remarks` note. SMILES-only models unchanged. Docstring updated.
+- **Verify on remote:** after `retrain_on_trainval.py` on a WithDesc run, `final_model.json` has `descriptor_columns`/`desc_stats`; `predict.py` on a CSV containing those descriptor columns produces scores (and errors clearly if columns are missing).
+
 ## Still pending (next session)
-- **Group G — predict.py descriptor path is NOT implemented.** `predict.py` still featurises SMILES only and ignores descriptors, so a retrained `line_graph_with_desc` model **cannot yet be used for inference**. Needs: read `descriptor_columns` + `desc_stats` from input CSV / manifest, validate + reorder by name, apply μ/σ. Also retrain (`retrain_on_trainval.py`) must propagate `descriptor_columns` + `desc_stats` into `final_model.json`.
 - **Group F — docs:** tech.md (`line_graph_with_desc` head in Stage 4), config_reference.md (`dataset.desc_dim` / `standardize_desc` / `desc_include`/`exclude`/`columns`, `gnn.desc_proj_dim`).
 - **Phase 4 leftover:** descriptors-only MLP sanity baseline; record non-GWU winner in trained_models.md (retrain in progress).
 - **#6 `dim_hidden` exploration.**

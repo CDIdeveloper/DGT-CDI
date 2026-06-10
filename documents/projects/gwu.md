@@ -27,7 +27,7 @@ only the descriptor channel changes, so AUC deltas are attributable to the descr
 - [x] **3. GWU-only** (40) — AUC 0.8728 ± 0.0070 (−0.0093 vs baseline; QM descriptors don't help)
 - [x] **4. non-GWU** (207) — AUC 0.9004 ± 0.0004 (+0.0183 vs baseline; **best variant**)
 - [x] **5. selected** (94, SHAP-screened) — AUC 0.8864 ± 0.0055 (+0.0043; < non-GWU)
-- [ ] **6. dim_hidden** try lower dim_hidden: 128 since GWU only 40 descs # must equal gnn.dim_inner
+- [x] **6. desc_proj_dim sweep** (variant 3, GWU-only): {16, 32, 64} vs 128 → AUC ~0.873–0.876, all below baseline; 64 marginally best (0.8762). Narrowing the descriptor projection does **not** rescue the GWU/QM set (table below).
 
 ## Results (test AUC, 4-seed mean ± std)
 
@@ -64,6 +64,28 @@ Test-AUC ranking: **non-GWU (0.9004) > all (0.8966) > selected-94 (0.8864) > bas
 4. **Recommendation:** for a deployable biodeg_gwu model, use the **non-GWU (RDKit) descriptor set** — best AUC, tightest variance, fewer features.
 
 **Caveat:** the SHAP ranking came from the analysis model, not DGT, so the selected-subset result (variant 5) is a heuristic. A DGT-native attribution (Grad-SAM / SHAP on the desc head) could screen differently — worth a follow-up if variant 5 is pursued further.
+
+## `desc_proj_dim` sweep (variant 3, GWU-only, 40 descriptors)
+
+Does narrowing the descriptor projection `f(desc)=Linear(40→desc_proj_dim)` help the small GWU set? **No** — AUC stays ~0.873–0.876 across `desc_proj_dim ∈ {16, 32, 64, 128}`, all **below baseline (0.8821)** and within each other's noise.
+
+| desc_proj_dim | Test AUC | Test F1 | Test acc | best-val epoch | params |
+|---|---|---|---|---|---|
+| 16 | 0.8731 ± 0.0085 | 0.7809 | 0.7883 | 21 | 1.253M |
+| 32 | 0.8731 ± 0.0104 | 0.7832 | 0.7892 | 38 | 1.254M |
+| 64 | 0.8762 ± 0.0052 | 0.7836 | 0.7925 | 43 | 1.255M |
+| 128 (variant 3) | 0.8728 ± 0.0070 | 0.7809 | 0.7892 | 28 | 1.258M |
+
+### Full metrics (desc_proj_dim sweep, 4-seed mean)
+
+| desc_proj_dim | Accuracy | Precision | Recall | F1-Score | AUROC |
+|---|---|---|---|---|---|
+| 16 | 0.7883 | 0.7763 | 0.7865 | 0.7809 | 0.8731 |
+| 32 | 0.7892 | 0.7754 | 0.7934 | 0.7832 | 0.8731 |
+| 64 | 0.7925 | 0.7846 | 0.7830 | 0.7836 | 0.8762 |
+| 128 (variant 3) | 0.7892 | 0.7799 | 0.7830 | 0.7809 | 0.8728 |
+
+`desc_proj_dim=64` is marginally best but within noise; none reach baseline. **Takeaway:** the GWU/QM descriptors lack useful biodegradability signal for the DGT head regardless of projection width — it's a *signal* problem, not a capacity/projection one. (Reinforces the main finding: non-GWU/RDKit descriptors carry the gain.)
 
 ## Commands
 

@@ -74,6 +74,18 @@ scored. A `summary.json` (+ PNGs, unless `--no-plots`) is written to
 `--plot-dir` (default: `<output_csv_dir>/<output_stem>_eval/`). Without
 `--label-col`, prediction behaves exactly as before.
 
+Descriptors (line_graph_with_desc models)
+-----------------------------------------
+If the bundled config's ``gnn.head`` is ``line_graph_with_desc``, the input CSV
+must also contain the descriptor columns used in training. predict.py reads
+``descriptor_columns`` + ``desc_stats`` (train-split mean/std) from the bundle
+manifest (final_model.json), validates the CSV has those columns, **reorders
+them to the training order** (by name — so the CSV's column order doesn't
+matter), and applies the same z-score. Rows with a missing / non-finite
+descriptor value get a ``remarks`` note and are skipped (NaN predictions).
+Descriptors are NOT computed from SMILES — supply them as columns. For
+SMILES-only (``line_graph``) models nothing changes.
+
 Scope
 -----
 - Cuda-only (no --device flag — fails fast if CUDA is unavailable).
@@ -256,6 +268,40 @@ def _resolve_threshold(ckpt_path: Path, threshold_arg: str) -> float:
         raise ValueError(
             f"--threshold must be a float or 'optimal-f1', got: {threshold_arg!r}"
         )
+
+
+def _load_desc_spec(ckpt_path: Path):
+    """Read descriptor_columns + desc_stats (mean/std) from the bundle manifest.
+
+    Required when the model's head is ``line_graph_with_desc`` — the manifest
+    (written by retrain_on_trainval.py) makes prediction self-contained: no
+    dataset / desc_stats.json needed at inference. Returns (columns, mean, std).
+    """
+    manifest = ckpt_path.parent / f'{ckpt_path.stem}.json'
+    if not manifest.is_file():
+        raise FileNotFoundError(
+            f"Model uses descriptors (gnn.head=line_graph_with_desc) but the "
+            f"manifest {manifest} is missing — it must carry 'descriptor_columns'"
+            f" + 'desc_stats'. Produce it with scripts/retrain_on_trainval.py."
+        )
+    with open(manifest) as fh:
+        m = json.load(fh)
+    cols = m.get('descriptor_columns')
+    stats = m.get('desc_stats') or {}
+    if not cols or 'mean' not in stats or 'std' not in stats:
+        raise KeyError(
+            f"{manifest} lacks 'descriptor_columns' / 'desc_stats.mean/std'. "
+            f"Re-run scripts/retrain_on_trainval.py (it records them for "
+            f"line_graph_with_desc models)."
+        )
+    mean = np.asarray(stats['mean'], dtype=float)
+    std = np.asarray(stats['std'], dtype=float)
+    if not (len(cols) == len(mean) == len(std)):
+        raise ValueError(
+            f"length mismatch in {manifest}: descriptor_columns={len(cols)}, "
+            f"mean={len(mean)}, std={len(std)}."
+        )
+    return cols, mean, std
 
 
 def _bootstrap_cfg(orig_config: Path) -> None:
@@ -468,15 +514,43 @@ def main():
             f"Available: {list(df.columns)}"
         )
 
+    # Descriptor channel (line_graph_with_desc models only): the input CSV must
+    # carry the same descriptor columns used in training. Validate by name,
+    # reorder to training order, and apply the persisted train-split z-score.
+    uses_desc = cfg.gnn.head == 'line_graph_with_desc'
+    desc_std_mat = None
+    if uses_desc:
+        desc_cols, desc_mean, desc_std = _load_desc_spec(ckpt_path)
+        missing = [c for c in desc_cols if c not in df.columns]
+        if missing:
+            shown = missing[:10] + (['...'] if len(missing) > 10 else [])
+            raise KeyError(
+                f"Input CSV is missing {len(missing)} descriptor column(s) this "
+                f"model needs: {shown}. A line_graph_with_desc model requires the "
+                f"same descriptors as training (see final_model.json "
+                f"'descriptor_columns')."
+            )
+        desc_raw = (df[desc_cols].apply(pd.to_numeric, errors='coerce')
+                    .to_numpy(dtype=float))           # reordered to training order
+        desc_std_mat = (desc_raw - desc_mean) / desc_std
+        print(f"Descriptor channel: {len(desc_cols)} columns (standardised).")
+
     valid_indices, valid_data, remarks = [], [], [''] * len(df)
     for i, smi in enumerate(df[args.smiles_col].astype(str).tolist()):
         try:
             data = _smiles_to_data(smi)
             data = _apply_pretransforms(data)
-            valid_data.append(data)
-            valid_indices.append(i)
         except Exception as e:
             remarks[i] = f"invalid SMILES: {e}"
+            continue
+        if uses_desc:
+            drow = desc_std_mat[i]
+            if not np.isfinite(drow).all():
+                remarks[i] = "missing/non-finite descriptor value(s)"
+                continue
+            data.desc = torch.tensor(drow, dtype=torch.float).view(1, -1)
+        valid_data.append(data)
+        valid_indices.append(i)
     print(f"Featurised {len(valid_indices)} / {len(df)} rows; "
           f"{len(df) - len(valid_indices)} invalid.")
 
