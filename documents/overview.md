@@ -185,43 +185,38 @@ The plan is phased; each phase has a verification check, matching the "Goal-Driv
 > 2. [graphgps/encoder/linear_edge_encoder.py](../graphgps/encoder/linear_edge_encoder.py) `LinearEdgeEncoder.__init__` — hardcoded format dispatcher rejected `PyG-biodeg_gwu`. Fixed with a one-line elif; deeper refactor logged in [Future work](#future-work-post-phase-6).
 
 ## Phase 2 — Descriptor plumbing (late fusion)
-- [X] Start a new branch for this update
-- [ ] Standardise descriptors (z-score using train-set mean/std; persist stats so test/val use the same normalisation).
-- [ ] Carry descriptors through the DGT backbone untouched — `batch.desc` is a graph-level tensor `[B, desc_dim]` produced directly by PyG's mini-batch collation. It does **not** pass through `to_dense_batch` (that only applies to node-level tensors), so no backbone code needs to change.
-- [ ] Add `DescriptorGraphHead` under [graphgps/head/](../graphgps/head/) — same as the current `line_graph` head (`LineGraphHead`, [san_graph.py:57](../graphgps/head/san_graph.py#L57)) but concatenates `batch.desc` (optionally passed through a small MLP) before the final `out_layer`. Register via `register_head` (e.g. as `line_graph_with_desc`).
-  - [ ] **Matching marker comment.** Add a `MOLECULAR DESCRIPTORS CONSUMED HERE` comment block at the line where `batch.desc` is read inside the head's `forward()`, paired with the entry-point markers already in [biodeg_gwu.py](../graphgps/loader/dataset/biodeg_gwu.py) and [biodeg.py](../graphgps/loader/dataset/biodeg.py) (`MOLECULAR DESCRIPTORS ENTER HERE`). Together they form a closed set — grepping for `MOLECULAR DESCRIPTORS` should return exactly: **one ENTER per dataset that carries descriptors** (currently 2: biodeg_gwu + biodeg) **+ one CONSUMED per head variant that uses them** (currently 0; Phase 2 adds 1 via `line_graph_with_desc`). Any other match means someone routed `desc` through the backbone — investigate immediately.
-- [ ] Add `tests/test_descriptor_head.py` — instantiate `DescriptorGraphHead`, run a forward pass on a toy batch, assert output shape `[B, C]`; assert both `line_graph` and `line_graph_with_desc` instantiate.
-- [ ] **Verify:** `pytest tests/test_descriptor_head.py` passes; the ablation switch (`gnn.head: line_graph` vs `line_graph_with_desc`) toggles cleanly; `pytest -m e2e` still green.
+> **DONE (branch `mol-desc`, 2026-06-09).** Design in [ADR 0001](adr/0001-pr-mol-desc.md), work log in [pr-1 log](log/pr-1-mol-desc.md). Applied/ablated on biodeg_gwu in [projects/gwu.md](projects/gwu.md).
+- [X] Start a new branch for this update (`mol-desc`).
+- [X] Standardise descriptors — z-score with train-split mean/std in the loaders (`dataset.standardize_desc`), persisted to `desc_stats.json`; written to a **separate** processed cache (baseline raw cache preserved).
+- [X] Carry descriptors through the DGT backbone untouched — confirmed: `batch.desc` `[B, desc_dim]` rides PyG collation, never enters `to_dense_batch`/attention. **No backbone code changed.**
+- [X] Add `DescriptorGraphHead` — `LineGraphWithDescHead` registered as `line_graph_with_desc` ([san_graph.py](../graphgps/head/san_graph.py)); `f(desc)=Linear(desc_dim→gnn.desc_proj_dim)→GELU` concatenated **post-readout** before `out_layer`.
+  - [X] **Matching marker comment** — `MOLECULAR DESCRIPTORS CONSUMED HERE` added; grep invariant holds (2 ENTER + 1 CONSUMED).
+- [X] Add [tests/test_descriptor_head.py](../tests/test_descriptor_head.py) — instantiate + forward toy batch; both heads register.
+- [X] **Verify:** head test passes; ablation toggle (`gnn.head`) works; 3-epoch dry-run green (verified on remote). (No `pytest -m e2e` marker suite in this fork — the dry-run is the integration check.)
+- [X] **Extension — descriptor-column selection** (`dataset.desc_include`/`desc_exclude`/`desc_columns` + auto-hash caches + [scripts/select_features_from_shap.py](../scripts/select_features_from_shap.py)) for the gwu descriptor-type study.
 
 ## Phase 3 — Config & first training run
 
 > **Baseline already exists.** [configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-GWU-DGT-Pipeline.yaml) (created in Phase 1's end-to-end smoke test) is the *no-descriptor* baseline. Phase 3 adds the *with-descriptor* variant alongside it.
 
-- [ ] Register the new `dataset.desc_dim` config field in [graphgps/config/dataset_config.py](../graphgps/config/dataset_config.py) — GraphGym rejects unknown YAML keys, so the field must exist in the schema before a config can reference it.
-- [ ] Create `configs/biodegradability/Biodeg-GWU-DGT-Pipeline-WithDesc.yaml`, a copy of the Phase 1 baseline with two changes:
-  - [ ] `gnn.head: line_graph_with_desc` (was: `line_graph`).
-  - [ ] `dataset.desc_dim: 247` (the value from `datasets/biodeg_gwu/raw/manifest.json`).
-  - [ ] Loss: keep `cross_entropy` — Phase 1 confirmed ~43% positive across splits, well-balanced. (If a later dataset comes in materially imbalanced (>~70/30), switch to `weighted_cross_entropy` or `focal_loss`, both already in [graphgps/loss/](../graphgps/loss/).)
-- [ ] Add `tests/test_config.py` — assert the new `Biodeg-GWU-DGT-Pipeline-WithDesc.yaml` loads without error and that `dataset.desc_dim` is a recognised config key.
-- [ ] Run `python main.py --cfg configs/biodegradability/Biodeg-GWU-DGT-Pipeline-WithDesc.yaml --repeat 4 seed 0`.
-- [ ] **Verify:** `pytest tests/test_config.py` passes; val ROC-AUC > random; test ROC-AUC is logged; no NaN losses; W&B run visible; `pytest -m e2e` still green.
+- [X] Register `dataset.desc_dim` (+ `dataset.standardize_desc`, `gnn.desc_proj_dim`) in [dataset_config.py](../graphgps/config/dataset_config.py) / [custom_gnn_config.py](../graphgps/config/custom_gnn_config.py).
+- [X] Create `Biodeg-GWU-DGT-Pipeline-WithDesc.yaml` (and the `biodeg` sibling + the `-gwu`/`-nongwu` selection variants):
+  - [X] `gnn.head: line_graph_with_desc`.
+  - [X] `dataset.desc_dim: 247` (+ `standardize_desc: True`).
+  - [X] Loss: kept `cross_entropy`.
+- [ ] ~~Add `tests/test_config.py`~~ — **skipped** (minimal-testing decision; the dry-run loads the config end-to-end as the check).
+- [X] Run `main.py --cfg ...-WithDesc.yaml --repeat 4` — done (4-seed; AUC 0.8966 ± 0.0027).
+- [X] **Verify:** val/test ROC-AUC logged, no NaN, clean run (remote).
 
 ## Phase 4 — Ablation: does the descriptor channel help?
-- [ ] Train two DGT variants (4 seeds each, same data, same split, both with `train.mode: dgt`), toggled purely by the `gnn.head` config key:
-  - [ ] DGT only (`gnn.head: line_graph`).
-  - [ ] DGT + descriptors (`gnn.head: line_graph_with_desc`).
-- [ ] Add a descriptors-only baseline — a small standalone MLP on the descriptor vector (a separate script / model, **not** a `gnn.head` toggle of `DGTModel`) — as a quick sanity check that the descriptors carry signal on their own.
-- [ ] For every variant × seed, run [scripts/analyze_run.py](../scripts/analyze_run.py) to generate ROC / PR / confusion-matrix plots + a `summary.json` with the scalar metrics:
-  ```bash
-  for cfg in Biodeg-GWU-DGT-Pipeline Biodeg-GWU-DGT-Pipeline-WithDesc; do
-    for s in 0 1 2 3; do
-      python scripts/analyze_run.py results/DGT/$cfg/$s
-    done
-  done
-  ```
-- [ ] Aggregate the per-seed `summary.json` files into a comparison table (mean ± std of test ROC-AUC, AUPRC, accuracy at the optimal-F1 threshold) — this is the ablation report.
-- [ ] Record the winning model in [trained_models.md](trained_models.md).
-- [ ] **Verify:** clear ordering and confidence intervals; decide whether to keep descriptors in the default config.
+
+> **Substantially complete for biodeg_gwu** via the descriptor-type study — full results in [projects/gwu.md](projects/gwu.md). 5 variants × 4 seeds: **non-GWU (RDKit) descriptors win** (test AUC 0.9004 ± 0.0004 vs 0.8821 baseline, +0.0183); GWU/QM descriptors don't help (and hurt alone). Ordering: non-GWU > all > SHAP-selected > baseline > GWU-only.
+
+- [X] Train DGT-only vs DGT+descriptors (4 seeds, `gnn.head` toggle) — done, plus GWU-only / non-GWU / SHAP-selected variants ([projects/gwu.md](projects/gwu.md)).
+- [ ] Descriptors-only MLP baseline (standalone sanity check) — **pending**.
+- [X] Comparison table (mean ± std test AUC / F1 / accuracy) — in [projects/gwu.md](projects/gwu.md) (read from each variant's `agg/test/best.json`; per-seed `analyze_run.py` plots optional).
+- [ ] Record the winning model (non-GWU) in [trained_models.md](trained_models.md) — **pending** (retrain on train+val in progress).
+- [X] **Verify:** clear ordering with tight CIs (non-GWU best, std 0.0004).
 
 ## Phase 5 — Interpretation (optional, paper-aligned)
 - [ ] Implement Grad-SAM-style attention attribution (Supplementary Information §9 "Attention-based interpretation", in `documents/paper/supp_nc_paper_lean.docx`) over the DGT attention maps.

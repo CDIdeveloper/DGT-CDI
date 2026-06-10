@@ -24,9 +24,10 @@ only the descriptor channel changes, so AUC deltas are attributable to the descr
 ## TODO
 - [x] **1. baseline (no desc)** — AUC 0.8821 ± 0.0034 ([trained_models.md](../trained_models.md))
 - [x] **2. all descriptors** — AUC 0.8966 ± 0.0027 (+0.0145 vs baseline; F1 0.819, acc 0.824)
-- [ ] **3. GWU-only** (desc_dim 40) — config ready; run 4-seed
-- [ ] **4. non-GWU** (desc_dim 207) — config ready; run 4-seed
-- [ ] **5. selected list** — define `desc_columns`, then run 4-seed
+- [x] **3. GWU-only** (40) — AUC 0.8728 ± 0.0070 (−0.0093 vs baseline; QM descriptors don't help)
+- [x] **4. non-GWU** (207) — AUC 0.9004 ± 0.0004 (+0.0183 vs baseline; **best variant**)
+- [x] **5. selected** (94, SHAP-screened) — AUC 0.8864 ± 0.0055 (+0.0043; < non-GWU)
+- [ ] **6. dim_hidden** try lower dim_hidden: 128 since GWU only 40 descs # must equal gnn.dim_inner
 
 ## Results (test AUC, 4-seed mean ± std)
 
@@ -34,9 +35,11 @@ only the descriptor channel changes, so AUC deltas are attributable to the descr
 |---|---|---|---|---|---|---|---|
 | 1 | none | — | 0.8821 ± 0.0034 | 0.7836 | 0.7950 | 0 | baseline (params 1.252M) |
 | 2 | all | 247 | 0.8966 ± 0.0027 | 0.8191 | 0.8242 | +0.0145 | descriptors help; best-val epoch 15; params 1.284M |
-| 3 | gwu | 40 | | | | | |
-| 4 | non-gwu | 207 | | | | | |
-| 5 | selected | | | | | | |
+| 3 | gwu | 40 | 0.8728 ± 0.0070 | 0.7809 | 0.7892 | −0.0093 | QM descriptors alone HURT (below baseline); epoch 28; params 1.258M |
+| 4 | non-gwu | 207 | 0.9004 ± 0.0004 | 0.8211 | 0.8267 | +0.0183 | **best variant**; RDKit drives the gain; tiny std; epoch 15; params 1.279M |
+| 5 | selected | 94 | 0.8864 ± 0.0055 | 0.8093 | 0.8150 | +0.0043 | SHAP-screened (94 cols); helps but < non-gwu; epoch 17; params 1.265M |
+
+NOTE selected means selected descriptors by SHAP values based 90% coverage.
 
 Fill each row from `results/DGT/<config_basename>/agg/test/best.json` after the run.
 
@@ -46,9 +49,21 @@ Fill each row from `results/DGT/<config_basename>/agg/test/best.json` after the 
 |---|---|---|---|---|---|---|
 | 1 | none (baseline) | 0.7950 | 0.7936 | 0.7743 | 0.7836 | 0.8821 |
 | 2 | all (247) | 0.8242 | 0.8094 | 0.8299 | 0.8191 | 0.8966 |
-| 3 | GWU only (40) | | | | | |
-| 4 | non-GWU (207) | | | | | |
-| 5 | selected | | | | | |
+| 3 | GWU only (40) | 0.7892 | 0.7799 | 0.7830 | 0.7809 | 0.8728 |
+| 4 | non-GWU (207) | 0.8267 | 0.8146 | 0.8281 | 0.8211 | 0.9004 |
+| 5 | selected (94) | 0.8150 | 0.8015 | 0.8177 | 0.8093 | 0.8864 |
+
+
+## Findings (5/5 variants complete)
+
+Test-AUC ranking: **non-GWU (0.9004) > all (0.8966) > selected-94 (0.8864) > baseline (0.8821) > GWU-only (0.8728)**.
+
+1. **The descriptor gain is entirely from the non-GWU (RDKit / functional-group) descriptors.** Non-GWU alone (+0.0183) beats *all* descriptors (+0.0145) with fewer features (207 vs 247) and a far tighter std (0.0004 vs 0.0027).
+2. **The GWU/QM descriptors do not help here — they hurt.** GWU-only (40) lands *below* baseline (−0.0093), and adding GWU on top of RDKit dilutes the result (all < non-GWU). So the 40 QM descriptors carry little biodegradability signal for the DGT late-fusion head and add noise.
+3. **SHAP-screened (94) helps modestly (+0.0043) but does not beat simply dropping GWU.** Consistent with (2): the SHAP screen (computed on the *analysis* model, over the qm_rdkit set) still retained QM descriptors the DGT head doesn't benefit from.
+4. **Recommendation:** for a deployable biodeg_gwu model, use the **non-GWU (RDKit) descriptor set** — best AUC, tightest variance, fewer features.
+
+**Caveat:** the SHAP ranking came from the analysis model, not DGT, so the selected-subset result (variant 5) is a heuristic. A DGT-native attribution (Grad-SAM / SHAP on the desc head) could screen differently — worth a follow-up if variant 5 is pursued further.
 
 ## Commands
 

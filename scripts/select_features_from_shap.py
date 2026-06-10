@@ -31,6 +31,32 @@ python-dotenv in the active env):
         --trans-learn-path /home/jovyan/tools/trans_learn \\
         --cumulative 0.90
 
+Output (printed to stdout)::
+
+    Reading SHAP ranking from s3://<bucket>/.../feature_rank_shap_gwu_b2_qm.csv
+
+    SHAP selection - cumulative=0.9: 24 features (covers 90.4% of total mean|SHAP|)  (of 40 ranked features)
+
+    # paste into the variant config (loader re-orders to manifest order):
+    dataset:
+      desc_dim: 24
+      desc_columns: ['weakly_polar_surface_area_gwu', 'count_atoms_gwu', ...]
+
+How to use the output:
+    1. Copy a base config, e.g. configs/biodegradability/Biodeg-GWU-DGT-Pipeline-WithDesc-gwu.yaml,
+       to a variant-5 file (e.g. ...-WithDesc-sel.yaml).
+    2. Under ``dataset:`` remove ``desc_include`` / ``desc_exclude`` and paste
+       the printed ``desc_dim`` and ``desc_columns`` lines (keep
+       ``standardize_desc: True``). ``desc_dim`` MUST equal len(desc_columns) —
+       the head asserts it.
+    3. Run training as usual:
+         python main.py --cfg configs/biodegradability/...-WithDesc-sel.yaml \\
+           --repeat 4 seed 0 wandb.use False optim.max_epoch 50
+       The loader auto-keys a SEPARATE processed cache from the resolved column
+       set (hash), so this subset never collides with other variants.
+    Tip: redirect to capture just the YAML block, e.g.
+         python scripts/select_features_from_shap.py ... --cumulative 0.90 | tail -n 3
+
 Caveats (see gwu.md):
     - SHAP importance is MODEL-SPECIFIC: this ranking comes from the analysis
       model, not DGT, so selection is a screening heuristic, not DGT-faithful.

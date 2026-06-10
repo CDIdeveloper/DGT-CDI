@@ -7,7 +7,7 @@
 - Title: Molecular descriptor plumbing (late fusion at the head)
 - Head branch: mol-desc
 - Base branch: main
-- Status: In progress (training path A–E implemented; G/F + retrain propagation deferred to post-dry-run)
+- Status: In progress — Phase-2 pipeline (A–E) + gwu descriptor-type study (5/5) complete. Deferred: predict.py descriptor path (group G) + retrain `desc_stats`→`final_model.json` + docs (group F). Follow-up: `dim_hidden` exploration (#6).
 - Related ADRs:
   - [../adr/0001-pr-mol-desc.md](../adr/0001-pr-mol-desc.md)
 
@@ -114,7 +114,15 @@ Descriptor columns are **positional** — everything after the first `id_column_
 - **2026-06-09 — predict.py descriptor source (WithDesc).** Descriptors are supplied as **input-CSV columns** (not computed from SMILES). predict.py validates them against `final_model.json` → `descriptor_columns` (error on missing), **reorders by name to the training order** (order matters to the model), and applies `desc_stats`. See group G.
 - **2026-06-09 — `f(desc)` = small MLP, `desc_proj_dim` tunable.** `Linear(desc_dim → gnn.desc_proj_dim) → GELU`, injected post-readout before `out_layer`. `desc_proj_dim` (default 128) is a YAML knob to modulate descriptor influence; model-only → no cache invalidation when swept. Confirmed "after the readout" matches the DGT author's guidance.
 - **2026-06-09 — Minimal testing.** One cheap head unit test + one re-run of `test_dataset.py`; primary verification is the group-E 3-epoch dry-run, then the full 4-seed run. No per-step tests.
-- **2026-06-09 — Descriptor-column SELECTION (gwu study side-task; pr-1 extension).** Added `dataset.desc_include` / `desc_exclude` / `desc_columns` (precedence: columns > include > all; exclude last); each non-empty selection auto-keys a separate processed cache `data_stdesc_<hash8>.pt`; head asserts `desc_dim` matches the selected width. New helper [_desc_select.py](../../graphgps/loader/dataset/_desc_select.py); loaders + master_loader updated; configs `*-WithDesc-gwu.yaml` / `-nongwu.yaml`; test [test_desc_select.py](../../tests/test_desc_select.py). Touches only fork-added files + additive config (author core untouched). Project record: [projects/gwu.md](../projects/gwu.md).
+- **2026-06-09 — Descriptor-column SELECTION (gwu study side-task; pr-1 extension).** Added `dataset.desc_include` / `desc_exclude` / `desc_columns` (precedence: columns > include > all; exclude last); each non-empty selection auto-keys a separate processed cache `data_stdesc_<hash8>.pt`; head asserts `desc_dim` matches the selected width. New helper [_desc_select.py](../../graphgps/loader/dataset/_desc_select.py); loaders + master_loader updated; configs `*-WithDesc-gwu.yaml` / `-nongwu.yaml`; test [test_desc_select.py](../../tests/test_desc_select.py). Plus [scripts/select_features_from_shap.py](../../scripts/select_features_from_shap.py) (SHAP→`desc_columns` from S3). Touches only fork-added files + additive config (author core untouched). Project record: [projects/gwu.md](../projects/gwu.md).
+- **2026-06-10 — gwu descriptor-type study COMPLETE (5/5).** Ordering by test AUC: non-GWU 0.9004 ± 0.0004 (+0.0183) > all 0.8966 > SHAP-selected-94 0.8864 > baseline 0.8821 > GWU-only 0.8728 (−0.0093). Conclusion: the RDKit (non-GWU) descriptors carry the gain; GWU/QM descriptors don't help. overview.md Phase 2/3/4 marked done; results in [projects/gwu.md](../projects/gwu.md).
+- **2026-06-10 — Follow-up #6: `dim_hidden` exploration.** Try lower `gt.dim_hidden` (must equal `gnn.dim_inner`) — motivated by small descriptor sets (e.g. GWU-only = 40). Tracked in [projects/gwu.md](../projects/gwu.md) TODO #6.
+
+## Still pending (next session)
+- **Group G — predict.py descriptor path is NOT implemented.** `predict.py` still featurises SMILES only and ignores descriptors, so a retrained `line_graph_with_desc` model **cannot yet be used for inference**. Needs: read `descriptor_columns` + `desc_stats` from input CSV / manifest, validate + reorder by name, apply μ/σ. Also retrain (`retrain_on_trainval.py`) must propagate `descriptor_columns` + `desc_stats` into `final_model.json`.
+- **Group F — docs:** tech.md (`line_graph_with_desc` head in Stage 4), config_reference.md (`dataset.desc_dim` / `standardize_desc` / `desc_include`/`exclude`/`columns`, `gnn.desc_proj_dim`).
+- **Phase 4 leftover:** descriptors-only MLP sanity baseline; record non-GWU winner in trained_models.md (retrain in progress).
+- **#6 `dim_hidden` exploration.**
 
 ## Open items to confirm
 - ~~Separate-cache mechanism~~ — **RESOLVED 2026-06-09:** config flag `dataset.standardize_desc: True` (group A) makes the loader normalise + write a distinct `processed_file_names` (e.g. `data_stdesc.pt`), coexisting with the baseline's raw cache under one root. The new config is named with a `-WithDesc` suffix; the baseline config is untouched.
