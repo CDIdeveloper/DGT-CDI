@@ -28,3 +28,24 @@ Config files for reproducing our results are provided in the `configs` folder.
 To train from scratch, run `python main.py --cfg config_file_path --repeat 1 seed 0 wandb.use False`.  
 
 This implementation is developed from graphgps. For more information, please check [https://github.com/rampasek/GraphGPS.git](https://github.com/rampasek/GraphGPS.git)
+
+---
+
+## DGT-CDI fork — CDI datasets and workflow
+
+The sections above cover the public benchmark datasets (QM9, BBBP, ...). This fork adds the CDI biodegradability pipeline: S3-hosted datasets, molecular-descriptor late fusion, and a train/val/test protocol that holds the test set out until the very end. Those datasets are **not** downloaded by `torch_geometric` — they are fetched once from S3 by a prepare script.
+
+| Task | Start here |
+|---|---|
+| **Onboard new data from S3** (new drop, or existing data under a new name) | [documents/modeling_routine.md → Step 0](documents/modeling_routine.md#step-0--onboard-a-new-dataset-new-data-on-s3) |
+| Train → deployable model → predict, end to end | [documents/modeling_routine.md → Quickstart](documents/modeling_routine.md#quickstart--end-to-end-training-routine) |
+| Which YAML key does what | [documents/config_reference.md](documents/config_reference.md) |
+| Leak-free selection protocol + leakage audit | [documents/dgt_porting_guide.md](documents/dgt_porting_guide.md) §2, §7 |
+| What this fork changed vs. the original DGT | [documents/upstream_sync.md](documents/upstream_sync.md) |
+
+Two things that bite newcomers:
+
+- **`scripts/prepare_data.py` needs a different conda env** than training (`boto3`, `python-dotenv`, `pyarrow` — not in `dgt`). Run it from trans_learn's env, then switch back. Everything after it is offline.
+- **Re-running `prepare_data.py` under an existing dataset name does not refresh the cache.** PyG re-processes only when the processed file is missing, so you must `rm -rf datasets/<name>/processed/` or you will silently train on the previous data.
+
+For the training pipeline itself, `python main.py --cfg <config> --repeat 4 seed 0 wandb.use False` works the same as above; CDI configs live in [configs/biodegradability/](configs/biodegradability/) and use `train.mode: dgt` (test scored once, on the best-val checkpoint).

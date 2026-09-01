@@ -1,0 +1,103 @@
+# biodeg_gwu_no_ind — NON-GWU descriptors (all columns except those ending `_gwu`).
+#
+# The non-GWU (RDKit / functional-group) set was the best descriptor variant on
+# the older biodeg_gwu dataset (documents/projects/gwu.md). NOTE that ranking
+# was made on TEST scores; re-derive it on val for this dataset with
+# `scripts/rank_configs_by_val.py --hide-test` before declaring a headline.
+#
+#   - gnn.head: line_graph_with_desc
+#   - dataset.desc_exclude: ['_gwu']  -> drop the 40 QM columns, keep ~207
+#   - dataset.standardize_desc: True  -> z-score (train-split stats); separate
+#     processed cache (hash-keyed on the resolved column list)
+#
+# Why the exclude pattern is safe on this dataset: id/metadata columns were
+# renamed `*_gwu` -> `*_fromgwu` upstream, and `_desc_select` matches by
+# SUBSTRING. `'_gwu' in '_fromgwu'` is False (the char before `gwu` is `m`,
+# not `_`), so this resolves to exactly the porting-guide §1 `rdkit_fg` set.
+#
+# VERIFY desc_dim before the 4-seed run — the head asserts it against the real
+# tensor width, so a wrong value fails loudly rather than silently:
+#   python -c "import json,sys; sys.path.insert(0,'graphgps/loader/dataset'); \
+#     from _desc_select import select_descriptor_columns as s; \
+#     c=json.load(open('datasets/biodeg_gwu_no_ind/raw/manifest.json'))['descriptor_columns']; \
+#     print('total',len(c),'gwu',len(s(c,include=['_gwu'])),'non-gwu',len(s(c,exclude=['_gwu'])))"
+
+out_dir: results/DGT
+metric_best: auc
+metric_agg: argmax
+wandb:
+  use: False
+  project: BiodegGwuNoInd-WithDesc-nongwu
+dataset:
+  format: PyG-biodeg_gwu_no_ind
+  name: biodeg_gwu_no_ind
+  task: graph
+  task_type: classification_binary
+  transductive: False
+  split_mode: standard
+  node_encoder: True
+  node_encoder_name: LinearNode
+  node_encoder_bn: False
+  edge_encoder: True
+  edge_encoder_shared: True
+  edge_encoder_name: LinearEdge+RWSE-SPDE
+  edge_encoder_num_types: 3
+  edge_encoder_bn: False
+  spd: True
+  spd_max_length: 8
+  rings: True
+  rings_max_length: 18
+  rings_coalesce_edges: False
+  desc_dim: 207             # <-- VERIFY with the count command above
+  standardize_desc: True
+  desc_exclude: ['_gwu']    # drop columns whose name contains '_gwu'
+share:
+  dim_in: 9
+posenc_RWSE:
+  enable: True
+  enable_edges: True
+  kernel:
+    times_func: range(1,17)
+  model: Linear
+  dim_pe: 64
+  raw_norm_type: None
+train:
+  mode: dgt
+  batch_size: 32
+  eval_period: 1
+  enable_ckpt: True
+  ckpt_best: True
+  ckpt_clean: True
+model:
+  type: DGTModel
+  loss_fun: cross_entropy
+  edge_decoding: dot
+  graph_pooling: add
+gt:
+  layer_type: None+DGT
+  layers: 4
+  n_heads: 16
+  dim_hidden: 128  # must equal gnn.dim_inner
+  dropout: 0.0
+  attn_dropout: 0.3
+  layer_norm: False
+  batch_norm: True
+gnn:
+  head: line_graph_with_desc
+  desc_proj_dim: 128
+  layers_pre_mp: 0
+  layers_post_mp: 3
+  dim_inner: 128  # must equal gt.dim_hidden
+  batchnorm: True
+  act: gelu
+  dropout: 0.0
+  agg: mean
+  normalize_adj: False
+optim:
+  clip_grad_norm: True
+  optimizer: adamW
+  weight_decay: 1e-2
+  base_lr: 0.0004
+  max_epoch: 50
+  scheduler: cosine_with_warmup
+  num_warmup_epochs: 10

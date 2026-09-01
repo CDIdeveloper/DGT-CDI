@@ -1,0 +1,93 @@
+# Baseline config for biodeg_gwu_no_ind (GWU batch-2, InD rows removed).
+#
+# This is the dataset the cross-model comparison in
+# documents/dgt_porting_guide.md §1 is defined on (5264 train / 278 test) —
+# unlike `biodeg_gwu` (5742 / 300), which INCLUDES inherently-biodegradable
+# rows and is therefore NOT comparable to the HGB / MPNN numbers in §3.
+#
+# Identical to Biodeg-GWU-DGT-Pipeline.yaml except dataset.format / name.
+# Keeping the architecture fixed is deliberate: it makes the no_ind result
+# readable as a pure dataset change against the existing biodeg_gwu baseline.
+#
+#   - gnn.head: line_graph  → NO descriptor fusion; the graph-only reference
+#     point (the `none` feature set in the porting guide's §1 table).
+#   - dataset.split_mode: standard → consumes the *_graph_index lists emitted
+#     by preformat_BiodegGwuNoInd. Do NOT switch to random/scaffold: those
+#     re-partition the whole pool and would mix the fixed test set back in
+#     (guide §7 item 6).
+
+out_dir: results/DGT
+metric_best: auc
+metric_agg: argmax   # AUC: higher is better → argmax
+wandb:
+  use: False
+  project: BiodegGwuNoInd
+dataset:
+  format: PyG-biodeg_gwu_no_ind
+  name: biodeg_gwu_no_ind
+  task: graph
+  task_type: classification_binary
+  transductive: False
+  split_mode: standard   # consume the train/val/test_graph_index set by the loader
+  node_encoder: True
+  node_encoder_name: LinearNode
+  node_encoder_bn: False
+  edge_encoder: True
+  edge_encoder_shared: True
+  edge_encoder_name: LinearEdge+RWSE-SPDE
+  edge_encoder_num_types: 3
+  edge_encoder_bn: False
+  spd: True
+  spd_max_length: 8
+  rings: True
+  rings_max_length: 18
+  rings_coalesce_edges: False
+share:
+  dim_in: 9
+posenc_RWSE:
+  enable: True
+  enable_edges: True
+  kernel:
+    times_func: range(1,17)
+  model: Linear
+  dim_pe: 64
+  raw_norm_type: None
+train:
+  mode: dgt              # DGT pipeline (train+val each epoch; test once on best ckpt)
+  batch_size: 32
+  eval_period: 1
+  enable_ckpt: True
+  ckpt_best: True
+  ckpt_clean: True
+model:
+  type: DGTModel
+  loss_fun: cross_entropy
+  edge_decoding: dot
+  graph_pooling: add
+gt:
+  layer_type: None+DGT
+  layers: 4
+  n_heads: 16
+  dim_hidden: 128  # must equal gnn.dim_inner
+  dropout: 0.0
+  attn_dropout: 0.3
+  layer_norm: False
+  batch_norm: True
+gnn:
+  head: line_graph       # baseline: NO descriptor fusion.
+  layers_pre_mp: 0
+  layers_post_mp: 3
+  dim_inner: 128  # must equal gt.dim_hidden
+  batchnorm: True
+  act: gelu
+  dropout: 0.0
+  agg: mean
+  normalize_adj: False
+optim:
+  clip_grad_norm: True
+  optimizer: adamW
+  weight_decay: 1e-2
+  base_lr: 0.0004
+  max_epoch: 50
+  scheduler: cosine_with_warmup
+  num_warmup_epochs: 10

@@ -4,7 +4,7 @@ Practical notes for running the DGT training pipeline day-to-day. For the concep
 
 This doc covers five things:
 1. [Where each thing already lives](#where-each-thing-already-lives) — file/location reference for testing, metrics, checkpoints, predictions, plots, HPO/final-model records.
-2. [Step-by-step procedure](#step-by-step-procedure) — 8 steps: env setup → train+val → final test → plots → per-config seed selection → **HPO across configs** → **retrain winner + record final model + ship to cloud** → predict on new SMILES.
+2. [Step-by-step procedure](#step-by-step-procedure) — **Step 0 (onboard a new dataset)** + 8 steps: env setup → train+val → final test → plots → per-config seed selection → **HPO across configs** → **retrain winner + record final model + ship to cloud** → predict on new SMILES.
 3. [Hyperparameter exploration](#hyperparameter-exploration) — which knobs matter most, with typical sweep ranges (reference for Step 6).
 4. [Recommended workflow](#recommended-workflow-cleanup-between-runs) — what to clean between runs and why (situation-based + by parameter category).
 5. (External) [trained_models.md](trained_models.md) — two tables: HPO sweeps (one per dataset × round) and Final models (deployment-ready models, post-retrain).
@@ -15,7 +15,7 @@ This doc covers five things:
 
 ## Quickstart — end-to-end training routine
 
-Make sure data is ready to train, see scripts/prepare_data.py for more details.
+Assumes the dataset is already onboarded. **New data on S3, or an existing dataset under a new name? Do [Step 0](#step-0--onboard-a-new-dataset-new-data-on-s3) first** — it is six edits across two repos, and skipping any of them fails at startup (or, worse, silently trains on stale cached data).
 
 The full path from a config to predicting on new molecules, in three stages. Worked example: [Biodeg-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-DGT-Pipeline.yaml). Results land under `results/DGT/<config_basename>/` — here `results/DGT/Biodeg-DGT-Pipeline/`. Run on the remote with `mamba activate dgt`. Substitute any other config to reuse verbatim.
 
@@ -94,6 +94,111 @@ Default path conventions when running `python main.py --cfg <cfg> ...`. Substitu
 ## Step-by-step procedure
 
 A clean run from a fresh shell on the remote, using BBBP as the worked example. Substitute your own config / dataset / `<run_dir>` paths as needed.
+
+### Step 0 — Onboard a new dataset (new data on S3)
+
+Do this **only** when the data is new to DGT-CDI: a fresh S3 drop, or existing data republished under a new name. Already-onboarded datasets (`biodeg_gwu`, `biodeg`) skip straight to Step 1.
+
+Six edits, spanning **two repos**. Steps 0.1 lives in `trans_learn`; 0.3–0.5 live here. Nothing is auto-discovered — a missing edit either raises at startup or, in the one case called out at the end, silently trains on the wrong data.
+
+#### 0.1 Register the dataset in trans_learn (the *other* repo)
+
+`scripts/prepare_data.py --dataset <name>` looks `<name>` up in trans_learn's `DATASET_REGISTRY`. [tests/data_loading/load_data.py](../tests/data_loading/load_data.py) imports it as `from trans_learn.settings import DATASET_REGISTRY`, so the authoritative file is **`<trans_learn>/src/trans_learn/settings.py`**, not this repo.
+
+> The copy at [tests/data_loading/settings.py](../tests/data_loading/settings.py) is a **reference copy that is never imported** (it exposes a bare `settings` module, not the `trans_learn.settings` package path the import needs). Editing it has no effect on the prepare script. It is also out of date — keep that in mind when reading it.
+
+Copy the `biodeg_gwu` entry and change the name plus the two S3 keys:
+
+```python
+"<new_name>": DatasetConfig(
+    name="biodeg",                      # display/group name; may repeat across entries
+    id_column_count=10,                 # SEE WARNING BELOW
+    target_column="degradable",
+    splits={
+        "train": DatasetSplitPaths(
+            data="ts_project_1/data/biodegradation/GWU/train_test/<new>_train.parquet",
+            fps={"default": ""},
+        ),
+        "test": DatasetSplitPaths(
+            data="ts_project_1/data/biodegradation/GWU/train_test/<new>_test.parquet",
+            fps={"default": ""},
+        ),
+    },
+),
+```
+
+⚠️ **`id_column_count` is the field that goes wrong silently.** [prepare_data.py:207-208](../scripts/prepare_data.py#L207-L208) splits the parquet's columns at exactly this index — everything left of it is SMILES + identifiers + target, everything right is descriptors. Get it wrong and either identifier columns are fed to the model as descriptors, or real descriptors are discarded. Verify it against the new parquet's actual column order before running anything.
+
+#### 0.2 Fetch the local snapshot
+
+```bash
+python scripts/prepare_data.py \
+  --dataset <new_name> \
+  --trans-learn-path /home/jovyan/tools/trans_learn
+```
+
+- **Different conda env.** This one command needs `boto3` / `python-dotenv` / `pyarrow`, which the `dgt` env does not have. Activate trans_learn's env for it, then switch back to `dgt` for training. Everything after this step is offline — no AWS credentials are needed at train time.
+- Writes `datasets/<new_name>/raw/{train,test}.parquet` + `manifest.json`.
+- **Record the two values it prints** — `desc_dim` and `task_type_hint`. They go straight into the YAML in 0.5.
+- Idempotent: re-running overwrites the local snapshot.
+
+#### 0.3 Add a PyG loader
+
+```bash
+cp graphgps/loader/dataset/biodeg_gwu.py graphgps/loader/dataset/<new_name>.py
+```
+
+Change the class name and `self.name = '<new_name>'`, plus the log/`tqdm` strings. Everything else — the split convention, train-only descriptor standardisation, descriptor selection, cache keying — is dataset-agnostic and needs no edit.
+
+Leave `VAL_FRACTION = 0.10` / `SPLIT_SEED = 42` alone unless you are deliberately matching another repo's folds (see [dgt_porting_guide.md](dgt_porting_guide.md) §2, which specifies `random_state = 1`).
+
+#### 0.4 Register the format
+
+Two files, both additive:
+
+- [master_loader.py](../graphgps/loader/master_loader.py) — add `preformat_<Name>` (copy `preformat_BiodegGwu` verbatim, swap the class) and a dispatch branch for `PyG-<new_name>`.
+- [linear_edge_encoder.py](../graphgps/encoder/linear_edge_encoder.py) — add `elif cfg.dataset.format == 'PyG-<new_name>':`. **Without this the run dies at startup**; the format dispatcher is a hardcoded chain with no default.
+
+#### 0.5 Write the config
+
+Copy the closest existing YAML from [configs/biodegradability/](../configs/biodegradability/) and set:
+
+| Key | Value |
+|---|---|
+| `dataset.format` | `PyG-<new_name>` |
+| `dataset.name` | `<new_name>` |
+| `dataset.desc_dim` | the `desc_dim` printed in 0.2 (or the *selected* width if using `desc_include`/`desc_exclude`/`desc_columns`) |
+| `dataset.task_type` | the `task_type_hint` printed in 0.2 |
+| `dataset.split_mode` | `standard` — leave it; `random`/`scaffold` would re-partition the pool and mix the fixed test set back in |
+| `train.mode` | `dgt` — leave it; the upstream `custom` mode scores test every epoch |
+
+`desc_dim` is asserted by the descriptor head against the actual tensor width, so a wrong value fails loudly rather than silently.
+
+#### 0.6 Smoke test, then the real run
+
+```bash
+# 3-epoch dry run — exit code 0 and a falling train loss is all you need here
+python main.py --cfg configs/biodegradability/<NewConfig>.yaml \
+  --repeat 1 seed 0 wandb.use False optim.max_epoch 3
+```
+
+Then follow the [Quickstart](#quickstart--end-to-end-training-routine) from stage 1. Sanity-check the logged per-split counts and class balance against what you expect from the parquet before committing to a 4-seed run.
+
+#### Reusing a dataset name with new data
+
+⚠️ PyG's `InMemoryDataset` decides whether to run `process()` **purely on whether the processed file exists**. The filename is keyed on the descriptor selection only ([biodeg_gwu.py:90-96](../graphgps/loader/dataset/biodeg_gwu.py#L90-L96)) — never on the contents of `raw/`, and never on a code version. So dropping a new `train.parquet` in under an existing dataset name means **`process()` never re-runs and you silently train on the old data.** Nothing warns you.
+
+```bash
+rm -rf datasets/<name>/processed/   # also clears stale desc_stats*.json
+```
+
+A new `<new_name>` avoids this entirely, which is the main reason to prefer one.
+
+#### Which biodeg dataset is this?
+
+[dgt_porting_guide.md](dgt_porting_guide.md) §1 defines the canonical cross-model dataset as **`biodeg_gwu_no_ind`** — inherent-biodegradable rows removed, **5264 train / 278 test**. The `biodeg_gwu` currently onboarded here is the **with-inherent** variant: **5742 train / 300 test** ([overview.md](overview.md) Phase 1). They are different datasets.
+
+That matters for §8's cross-model comparison rules: DGT's published numbers are on a 300-row test set, so they are **not** directly comparable to the HGB / MPNN numbers quoted on the 278-test. If your new drop is the `no_ind` variant, onboarding it under its own name is what makes that comparison valid — and the old `biodeg_gwu` results should stay labelled with their own dataset rather than being read against the guide's tables.
 
 ### Step 1 — Set up the environment
 
@@ -490,6 +595,7 @@ When and what to clean between training runs. Default is to clean **nothing** �
 | Changed pre-transform params (`spd_max_length`, `rings_max_length`, RWSE `times_func`, etc.) | `rm -rf datasets/<DatasetName>/processed/` | PyG keys the cache by **dataset class + root path only** — it does **not** detect changes to your YAML's pre-transform parameters. Without manual cleanup, the run silently reuses stale processed data and you'd be training on the *old* parameter values. Leave `raw/` alone so the dataset isn't re-downloaded. |
 | Changed `--repeat N` between runs (e.g. 4 → 2) | `rm -rf results/DGT/<config_name>/` before re-running | Each per-seed dir is wiped on re-run, but the parent dir is not. Going from `--repeat 4` to `--repeat 2` leaves the old `2/` and `3/` seed dirs in place, and `agg_runs()` at the end of `main.py` will fold them into the aggregated mean ± std alongside the new runs — mixing old and new results. |
 | Changed dataset loader / featurisation code (`graphgps/loader/dataset/...`) | `rm -rf datasets/<DatasetName>/processed/` | The processed cache reflects the previous loader's output (atom / bond features, edge_index, attached tensors). PyG doesn't notice that the loader changed, so a stale cache would silently feed the model wrong / old data. |
+| **New `raw/` data under an existing dataset name** (re-ran `prepare_data.py`, new S3 drop) | **`rm -rf datasets/<DatasetName>/processed/`** | The single most dangerous stale-cache case. `InMemoryDataset` runs `process()` only if the processed file is *absent*, and the filename is keyed on the descriptor selection alone — never on `raw/` contents. Same name + same selection = cache hit = **you silently train on the old data, with the old `desc_stats*.json` normalisation**. Nothing warns you. See [Step 0](#reusing-a-dataset-name-with-new-data). |
 
 ### Cleanup by parameter category (quick reference for HPO sweeps)
 

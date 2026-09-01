@@ -82,6 +82,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Never run pip or conda command
 - Always confirm before run command from terminal
 - Never check .env file under any folder
+- Never touch git or github command
+- Donot "AskUserQuestion", just summarize and highlight the questions in response, But still rank the proposed solutions and add "(Recommended)" label for the first. Then wait for answers in prompt from me for next step. 
 
 ## Session Management
 When the context window (auto-compact) reaches 30% remaining, remind me to update relevant .md files, to make sure smooth transaction between conversation sessions. for example:
