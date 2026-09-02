@@ -388,7 +388,21 @@ Stated explicitly so that reviewers and future work are not misled.
    run-to-run CV-F1 variation comparable to an entire hyperparameter grid's spread. Four
    seeds is the minimum for a credible ± and is insufficient to resolve differences of the
    size seen in §5.
-6. **Architecture not tuned on this dataset.** Hyperparameters are inherited from a sweep run
+6. **Descriptor standardisation is not refit per CV fold.** The z-score mean/σ are computed
+   inside the dataset loader's `process()` from the train-parquet rows excluding the original
+   fixed 10 % carve-out, and are baked into the processed cache — they do not change with
+   `split_mode`. Under `cv-train-5` this means each fold's validation rows contributed to the
+   normalisation constants that are then applied to them. Porting guide §7 item 3 requires
+   scalers to be fit on the **training folds** during CV, so this is a genuine deviation.
+   Magnitude is small: each molecule contributes ~1/4738 to a mean, and the **test rows never
+   contributed at all**, so the reported test metrics are unaffected. Direction matters for
+   interpretation — only the three descriptor arms are touched (the graph-only arm applies no
+   standardisation), and the effect very slightly *favours* them, so a null descriptor result
+   under CV is if anything understated. Fixing it properly requires either a per-fold
+   processed cache (5× featurisation cost) or moving standardisation out of the loader into a
+   post-split transform; deferred.
+
+7. **Architecture not tuned on this dataset.** Hyperparameters are inherited from a sweep run
    on `biodeg_gwu`, which was itself test-selected. No architecture search has been performed
    on `biodeg_gwu_no_ind`.
 
