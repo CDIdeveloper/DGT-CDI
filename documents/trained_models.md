@@ -9,8 +9,8 @@ Two tables — **HPO sweeps** (one per dataset × round; used to pick a winning 
 > | `biodeg_gwu` | 5742 / **300** | InD rows retained. **Not** the porting-guide dataset. |
 > | `biodeg_gwu_no_ind` | 5264 / **278** | InD rows removed. The canonical cross-model dataset ([dgt_porting_guide.md §1](dgt_porting_guide.md)). |
 >
-> Only `biodeg_gwu_no_ind` numbers are comparable to the HGB / MPNN references in
-> porting-guide §3. In addition, **every `biodeg_gwu` row below was selected on test**
+> Only `biodeg_gwu_no_ind` numbers are on the test split used for cross-model comparison.
+> In addition, **every `biodeg_gwu` row below was selected on test**
 > — the round-1 winner and the descriptor-variant headline were both picked from
 > `agg/test/best.json`, which porting-guide §2 prohibits. Treat those rows as a record
 > of what was run, not as validated results. See [projects/paper.md](projects/paper.md) §8.
@@ -96,11 +96,10 @@ Validation, 4 seeds, mean ± population std. F1 primary, ROC-AUC tiebreak.
 |---|---|---|---|---|
 | 0.8552 ± 0.0047 | 0.8562 ± 0.0078 | 0.8663 ± 0.0199 | **0.8610 ± 0.0066** | **0.9196 ± 0.0027** |
 
-Against the same 278-molecule test set ([dgt_porting_guide.md](dgt_porting_guide.md) §3):
-HGB × `rdkit_fg` F1 0.8500 / AUROC 0.9152; HGB × `qm_rdkit` AUROC 0.9185; MPNN × `rdkit_fg`
-F1 0.8522 / AUROC 0.8969. **DGT leads on both metrics** — decisively over the MPNN
-(AUROC +0.0227), at parity with HGB on AUROC (+0.0011, inside seed std) and ahead on F1
-(+0.0110). Full analysis and caveats: [projects/paper.md](projects/paper.md) §5.4.
+Cross-model comparison is assembled centrally and is out of scope here; see
+[projects/paper.md](projects/paper.md) §5.4 for what must accompany these numbers when they
+are carried over (0.5 threshold, single-validation-split selection, seed-only dispersion,
+AUPRC still outstanding).
 
 ## Final model without molecular descriptor
 

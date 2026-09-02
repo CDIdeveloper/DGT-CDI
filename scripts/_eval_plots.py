@@ -38,33 +38,58 @@ def to_1d(arr) -> np.ndarray:
     return np.asarray(arr).reshape(-1)
 
 
+def best_f1_threshold(y_true_t, y_pred_t):
+    """Return (threshold, f1) maximising F1 over the PR-curve thresholds.
+
+    Sweeping thresholds and keeping the maximum **fits a parameter to the split
+    it is computed on**, so the resulting F1 is optimistically biased for that
+    split. Derive the threshold from VALIDATION predictions and apply it to
+    test; never sweep on test and then quote F1 at that threshold on the same
+    test set (dgt_porting_guide.md §7 item 3 lists the decision threshold among
+    the quantities that must be fit on train/val only).
+    """
+    y_true = to_1d(y_true_t).astype(int)
+    y_score = to_1d(y_pred_t).astype(float)
+    _, _, pr_thresh = precision_recall_curve(y_true, y_score)
+    if len(pr_thresh) == 0:
+        return 0.5, 0.0
+    f1s = [f1_score(y_true, (y_score >= t).astype(int), zero_division=0)
+           for t in pr_thresh]
+    best_idx = int(np.argmax(f1s))
+    return float(pr_thresh[best_idx]), float(f1s[best_idx])
+
+
 def analyze_classification_binary(y_true_t, y_pred_t, plot_dir,
-                                  make_plots=True) -> dict:
+                                  make_plots=True, f1_threshold=None) -> dict:
     """Binary-classification metrics (+ optional plots). Returns a summary dict.
 
     Metrics (ROC-AUC, average precision, optimal-F1 threshold, confusion
     matrix) are always computed. When ``make_plots`` is True, also writes
     roc.png / pr.png / confusion.png / score_hist.png into ``plot_dir``.
+
+    Args:
+        f1_threshold: decision threshold to report the confusion matrix and
+            thresholded F1 at. Pass the value derived from VALIDATION
+            predictions so the reported figures are not threshold-fitted to
+            this split. When None, falls back to sweeping this split
+            in-sample — convenient, but optimistically biased; the summary
+            records which happened under ``f1_threshold_source``.
     """
     y_true = to_1d(y_true_t).astype(int)
     y_score = to_1d(y_pred_t).astype(float)
 
     roc_auc = roc_auc_score(y_true, y_score)
-    prec, rec, pr_thresh = precision_recall_curve(y_true, y_score)
+    prec, rec, _ = precision_recall_curve(y_true, y_score)
     ap = average_precision_score(y_true, y_score)
 
-    # Optimal-F1 threshold (sweep PR thresholds) — a metric, always computed.
-    f1s = []
-    for t in pr_thresh:
-        y_hat = (y_score >= t).astype(int)
-        f1s.append(f1_score(y_true, y_hat, zero_division=0))
-    if len(f1s) == 0:
-        best_t, best_f1 = 0.5, 0.0
+    # Always compute the in-sample sweep, for reference and for the fallback.
+    insample_t, insample_f1 = best_f1_threshold(y_true, y_score)
+    if f1_threshold is None:
+        best_t, source = insample_t, "in-sample (this split)"
     else:
-        best_idx = int(np.argmax(f1s))
-        best_t = float(pr_thresh[best_idx])
-        best_f1 = float(f1s[best_idx])
+        best_t, source = float(f1_threshold), "validation"
     y_hat_best = (y_score >= best_t).astype(int)
+    best_f1 = float(f1_score(y_true, y_hat_best, zero_division=0))
     cm = confusion_matrix(y_true, y_hat_best, labels=[0, 1])
 
     if make_plots:
@@ -130,7 +155,13 @@ def analyze_classification_binary(y_true_t, y_pred_t, plot_dir,
         "roc_auc": float(roc_auc),
         "average_precision": float(ap),
         "best_f1_threshold": best_t,
+        "f1_threshold_source": source,
         "best_f1": best_f1,
+        # What an in-sample sweep on THIS split would have given. When
+        # f1_threshold_source is "validation", the gap between best_f1 and
+        # best_f1_insample is the optimism an in-sample threshold would buy.
+        "best_f1_threshold_insample": insample_t,
+        "best_f1_insample": insample_f1,
         "confusion_matrix": cm.tolist(),
     }
 

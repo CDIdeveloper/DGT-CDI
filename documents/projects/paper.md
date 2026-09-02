@@ -5,7 +5,7 @@ ready-biodegradability classification, with a molecular-descriptor late-fusion a
 
 **Status (2026-09-02):** configuration selected on validation with test suppressed; test set
 then read **once** for the selected configuration (§5.3). Headline: DGT reaches
-**F1 0.8610, ROC-AUC 0.9196** on the 278-molecule test set, exceeding both prior baselines.
+**F1 0.8610 ± 0.0066, ROC-AUC 0.9196 ± 0.0027** on the 278-molecule test set.
 
 Related: [gwu.md](gwu.md) (earlier study on the *different* `biodeg_gwu` dataset —
 see §8 before citing it), [../dgt_porting_guide.md](../dgt_porting_guide.md) (protocol
@@ -15,16 +15,19 @@ this work follows), [../trained_models.md](../trained_models.md) (model registry
 
 ## 1. Contribution
 
-Prior work on this endpoint ([porting guide §3](../dgt_porting_guide.md)) established that
-descriptor gradient boosting (HistGradientBoosting, CV-F1 ≈ 0.813) outperforms a chemprop
-MPNN (CV-F1 ≈ 0.784), suggesting the endpoint is driven by composition and functional-group
-content that a purely graph-based view under-represents. **The question this work asks is
-whether a graph transformer with an explicit descriptor-fusion channel closes that gap**,
-and — separately — whether the descriptor channel contributes at all once model selection is
-made without reference to the test set.
+Prior work on this endpoint indicated that descriptor-based gradient boosting outperforms a
+message-passing neural network, suggesting the endpoint is driven by composition and
+functional-group content that a purely graph-based view under-represents. **This work asks
+whether a graph transformer with an explicit descriptor-fusion channel performs
+competitively**, and — separately — whether the descriptor channel contributes at all once
+model selection is made without reference to the test set.
 
 The second question turns out to matter: a previously reported descriptor benefit on a
 related dataset does not survive re-derivation on validation data (§8).
+
+**Scope.** This document covers the DGT results produced in this repository. Cross-model
+comparison against the gradient-boosting and MPNN baselines is assembled centrally, where
+those models' full provenance is available; no baseline numbers are reproduced here (§5.4).
 
 ---
 
@@ -131,7 +134,7 @@ The protocol is the leak-free selection procedure specified in
 5. **Metrics from probabilities.** The model emits calibrated probabilities via sigmoid.
    ROC-AUC and average precision are computed from probabilities; accuracy, precision,
    recall, and F1 from the probability thresholded at **0.5** — matching the definitions
-   used for the HGB and MPNN baselines so the numbers are directly comparable.
+   used for the baseline models, so the numbers remain comparable when assembled centrally.
 6. **Fixed split respected.** Configuration uses the pre-set split indices emitted by the
    loader; the random and scaffold split modes, which would re-partition the whole pool and
    readmit test molecules to training, are not used.
@@ -152,12 +155,12 @@ The implementation was audited line-by-line against
 | 7 | Probabilities, not hard labels | **Pass** |
 | 8 | No de-duplication re-split | Pass — split used as published |
 
-Two items were initially *not* satisfied by the deployment path. The first — the deployment
-seed being chosen by median test score — was **fixed** (§9 item 3); seed and epoch budget are
-now both validation-derived. The second remains: the deployment decision threshold is
-optimised on test predictions (§9 item 4). It affects only
-`predict.py --threshold optimal-f1`; every metric reported in this document uses the fixed
-0.5 threshold and is unaffected.
+Two items were initially *not* satisfied by the deployment path; both have since been
+**fixed in code**. Seed choice and epoch budget are now validation-derived (§9 item 3), and
+the decision threshold is now fitted on validation predictions rather than swept on test
+(§9 item 4). The runs behind §5.3 predate the threshold fix and therefore still carry a
+test-derived threshold in their manifest — this affects only
+`predict.py --threshold optimal-f1`, never the 0.5-threshold metrics reported here.
 
 ---
 
@@ -198,38 +201,23 @@ contributes the metric at its own best-validation epoch.
 | **F1** | **0.8610 ± 0.0066** |
 | **ROC-AUC** | **0.9196 ± 0.0027** |
 
-### 5.4 Comparison with prior models on the same 278-molecule test set
+### 5.4 Notes for cross-model comparison
 
-References from [porting guide §3](../dgt_porting_guide.md). All at threshold 0.5, all on the
-identical fixed test split.
+**Out of scope for this document.** Comparison against the gradient-boosting and MPNN
+baselines is performed centrally, where those models' full provenance (selection protocol,
+dispersion, package versions) is available. This repository owns the DGT numbers only.
 
-| Model | Feature set | F1 | ROC-AUC |
-|---|---|---|---|
-| **DGT (this work)** | `rdkit_fg` | **0.8610** | **0.9196** |
-| HGB (gradient boosting) | `rdkit_fg` | 0.8500 | 0.9152 |
-| HGB | `qm_rdkit` | — | 0.9185 |
-| MPNN (chemprop) | `rdkit_fg` | 0.8522 | 0.8969 |
-| MPNN | `qm` | 0.8462 | 0.8969 |
-| MPNN | `qm_rdkit` | 0.8362 | 0.8911 |
+What to carry forward when the comparison is assembled:
 
-**DGT ranks first on both metrics.** Read carefully, though:
-
-- **vs MPNN — a clear win.** ROC-AUC +0.0227 over the best MPNN arm, roughly eight times
-  DGT's own seed std. F1 +0.0088. The graph transformer is decisively the better graph model
-  on this endpoint.
-- **vs HGB — a win on F1, a tie on ROC-AUC.** F1 +0.0110 over HGB's best (≈1.7 seed std);
-  ROC-AUC +0.0011 over HGB's best AUROC arm, which is well inside DGT's std of 0.0027 and
-  should be reported as parity, not superiority.
-- **Caveat on all comparisons.** The published HGB and MPNN figures are point estimates with
-  no reported dispersion, and both were selected by 5-fold CV on train while DGT was selected
-  on a single validation split (§9 item 1). With 278 test molecules, the sampling uncertainty
-  on any single accuracy estimate is roughly ±0.04 at 95 % — larger than every gap in the
-  table. Differences of ~1 point should be treated as suggestive.
-
-**Answering §1's question:** a graph transformer *does* close the MPNN-to-HGB gap on this
-endpoint — it matches descriptor gradient boosting on ranking quality and edges ahead on
-thresholded F1. It does so, however, largely on graph structure: the descriptor channel that
-was supposed to supply the missing composition signal contributes almost nothing (§7).
+- All figures in §5.3 are at the **fixed 0.5 threshold**, from probabilities, on the fixed
+  278-molecule test split — the definitions required for comparability.
+- DGT was selected on a **single 90/10 validation split**, not 5-fold CV on train (§9 item 1).
+  A CV-matched comparison is not yet possible from this side; implementing the CV harness is
+  the open item that would enable it.
+- **AUPRC is not yet computed** for DGT (§11).
+- Dispersion is over **4 training seeds** on a fixed split — it captures optimisation
+  variance, not sampling variance of the 278-molecule test set, which is substantially
+  larger. Seed std should not be read as a confidence interval on the metric.
 
 ---
 
@@ -294,8 +282,8 @@ without two qualifications:
 
 1. **Different dataset.** `biodeg_gwu` retains inherently-biodegradable rows: 5742 train /
    **300** test, against 5264 / **278** here. Its test metrics are not on the 278-molecule
-   test set used by the HGB and MPNN baselines, so they were never directly comparable to
-   those figures.
+   test set used by the baseline models, so they were never directly comparable to those
+   figures.
 2. **Test-selected.** Its feature-set ranking, and the preceding architecture sweep, were
    both decided on test ROC-AUC read from `agg/test/best.json`. This is the selection
    procedure that [porting guide §2](../dgt_porting_guide.md) explicitly prohibits.
@@ -315,7 +303,7 @@ Stated explicitly so that reviewers and future work are not misled.
 1. **Single validation split, not cross-validation.** Selection used one fixed 90/10
    train/validation carve-out, not the stratified 5-fold cross-validation on train that
    [porting guide §2](../dgt_porting_guide.md) specifies. Consequences: (a) selection is
-   noisier than the protocol intends; (b) the folds are not matched to the MPNN's, so the
+   noisier than the protocol intends; (b) the folds are not matched to the baselines', so the
    "same CV basis" requirement of §8 is not yet satisfiable and **no cross-model CV
    comparison is claimed here**. Implementing the §5 CV harness is the highest-value next
    step.
@@ -327,11 +315,16 @@ Stated explicitly so that reviewers and future work are not misled.
    (`<seed>/val/stats.json`) and takes the retrain budget from that seed's best-validation
    epoch. It no longer opens anything under `<seed>/test/`, and the manifest records
    `seed_selected_on: validation`.
-4. **Deployment threshold is optimised on test.** The F1-optimal decision threshold embedded
-   in the deployment manifest is swept over test predictions. Any F1, precision, or recall
-   quoted *at that threshold on the same test set* is optimistically biased. All headline
-   metrics in this document and in the cross-model comparison use the fixed 0.5 threshold and
-   are unaffected.
+4. **Deployment threshold: fixed in code, but the shipped bundle predates the fix.**
+   `analyze_run.py` now fits the F1-optimal decision threshold on **validation** predictions
+   and applies it to test, and `dgt_train.py` dumps `<seed>/val/predictions.pt` to enable
+   this. Runs trained before that change lack the file and fall back to sweeping on test,
+   with an explicit warning. The 4 seeds behind §5.3 are such runs, so the threshold in the
+   current deployment manifest is test-derived. This affects **only**
+   `predict.py --threshold optimal-f1`; every metric reported in this document uses the fixed
+   0.5 threshold and is unaffected. Re-running the four seeds would produce a
+   validation-fitted threshold, at the cost of new (non-identical) test numbers, since GPU
+   training is not bit-reproducible.
 5. **Four seeds.** GPU training is non-deterministic; prior work on this endpoint observed
    run-to-run CV-F1 variation comparable to an entire hyperparameter grid's spread. Four
    seeds is the minimum for a credible ± and is insufficient to resolve differences of the
@@ -387,10 +380,9 @@ graph-tool 2.45. Exact package set in `environment.yaml`.
 ## 11. Remaining work before submission
 
 - [x] Read the test set **once** for the selected configuration (§5.3, 2026-09-02).
-- [x] Place those numbers against the HGB and MPNN references (§5.4).
-- [ ] **AUPRC** — not yet computed for DGT; the baselines report it (HGB 0.9225 / 0.9249).
+- [ ] **AUPRC** — not yet computed for DGT, and required for the central comparison.
       `scripts/analyze_run.py` emits `average_precision` per seed; aggregate across the 4
-      seeds to complete the comparison table.
+      seeds.
 - [ ] Implement the 5-fold CV harness (porting guide §5) so a matched cross-model CV
       comparison becomes possible; re-run selection under it.
 - [ ] Increase seed count, or report CV mean ± std over folds, to resolve whether the

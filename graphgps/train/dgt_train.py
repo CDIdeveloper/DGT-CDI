@@ -50,12 +50,16 @@ def _eval_and_collect(logger, loader, model, split):
             loss, pred_score = compute_loss(pred, true)
             _true = true.detach().to('cpu', non_blocking=True)
             _pred = pred_score.detach().to('cpu', non_blocking=True)
-        logger.update_stats(
-            true=_true, pred=_pred,
-            loss=loss.detach().cpu().item(),
-            lr=0, time_used=time.time() - time_start,
-            params=cfg.params, dataset_name=cfg.dataset.name,
-        )
+        # logger=None collects predictions without recording an epoch. Used for
+        # the post-training val dump below, which must NOT append a record to
+        # val/stats.json (downstream tools take the max over that file).
+        if logger is not None:
+            logger.update_stats(
+                true=_true, pred=_pred,
+                loss=loss.detach().cpu().item(),
+                lr=0, time_used=time.time() - time_start,
+                params=cfg.params, dataset_name=cfg.dataset.name,
+            )
         ys_true.append(_true)
         ys_pred.append(_pred)
         time_start = time.time()
@@ -149,6 +153,22 @@ def dgt_train(loggers, loaders, model, optimizer, scheduler):
     else:
         logging.info(f"[dgt] Loaded checkpoint from epoch {loaded_epoch - 1} "
                      f"(best by val_{m}).")
+
+    # Per-sample VAL predictions from the same checkpoint, so downstream tools
+    # can fit the decision threshold on validation instead of on test
+    # (dgt_porting_guide.md §7 item 3). logger=None -> no extra val/stats.json
+    # record is written.
+    val_true, val_pred = _eval_and_collect(None, val_loader, model, split='val')
+    val_pred_path = Path(cfg.run_dir) / 'val' / 'predictions.pt'
+    val_pred_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {'y_true': val_true, 'y_pred': val_pred,
+         'best_epoch': best_epoch,
+         'metric_best': m,
+         'best_val_metric': float(perf_val[best_epoch][m])},
+        val_pred_path,
+    )
+    logging.info(f"[dgt] Wrote val predictions: {val_pred_path}")
 
     y_true, y_pred = _eval_and_collect(test_logger, test_loader, model,
                                        split='test')

@@ -36,7 +36,11 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from _eval_plots import analyze_classification_binary, analyze_regression  # noqa: E402
+from _eval_plots import (  # noqa: E402
+    analyze_classification_binary,
+    analyze_regression,
+    best_f1_threshold,
+)
 
 
 def _load_config(run_dir: Path) -> dict:
@@ -98,8 +102,31 @@ def main() -> None:
     plot_dir.mkdir(exist_ok=True)
 
     if task_type == "classification_binary":
+        # Fit the decision threshold on VALIDATION predictions, then apply it to
+        # test. Sweeping it on test and then quoting F1 at that threshold on the
+        # same test set is threshold-fitting-on-test (porting guide §7 item 3).
+        val_pred_path = run_dir / "val" / "predictions.pt"
+        val_threshold = None
+        if val_pred_path.is_file():
+            val_pred = torch.load(val_pred_path, map_location="cpu",
+                                  weights_only=False)
+            val_threshold, val_f1 = best_f1_threshold(val_pred["y_true"],
+                                                      val_pred["y_pred"])
+            print(f"Threshold from validation: {val_threshold:.4f} "
+                  f"(val F1 {val_f1:.4f})")
+        else:
+            print(
+                f"WARNING: {val_pred_path} not found — falling back to sweeping "
+                f"the threshold on TEST, which is optimistically biased for any "
+                f"F1/precision/recall quoted at it on this same test set. Runs "
+                f"trained before val-prediction dumping was added lack this "
+                f"file; re-run training to obtain a validation-fitted "
+                f"threshold. Metrics at the default 0.5 threshold are "
+                f"unaffected."
+            )
         summary = analyze_classification_binary(y_true, y_pred, plot_dir,
-                                                make_plots=make_plots)
+                                                make_plots=make_plots,
+                                                f1_threshold=val_threshold)
     elif task_type == "regression":
         summary = analyze_regression(y_true, y_pred, plot_dir,
                                      make_plots=make_plots)
