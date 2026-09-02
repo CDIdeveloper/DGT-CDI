@@ -90,8 +90,17 @@ Validation, 4 seeds, mean ± population std. F1 primary, ROC-AUC tiebreak.
 **Selection (recorded 2026-09-02, before any test number was read):** F1 top-two differ by
 0.0001, inside both seed stds → tie → broken on ROC-AUC → **`rdkit_fg`**.
 
-**Test metrics: not yet read.** Fill the Final-models row below only after the single test
-read for the selected config.
+**Test — selected config only, read once (2026-09-02), 4 seeds, threshold 0.5:**
+
+| Accuracy | Precision | Recall | F1 | ROC-AUC |
+|---|---|---|---|---|
+| 0.8552 ± 0.0047 | 0.8562 ± 0.0078 | 0.8663 ± 0.0199 | **0.8610 ± 0.0066** | **0.9196 ± 0.0027** |
+
+Against the same 278-molecule test set ([dgt_porting_guide.md](dgt_porting_guide.md) §3):
+HGB × `rdkit_fg` F1 0.8500 / AUROC 0.9152; HGB × `qm_rdkit` AUROC 0.9185; MPNN × `rdkit_fg`
+F1 0.8522 / AUROC 0.8969. **DGT leads on both metrics** — decisively over the MPNN
+(AUROC +0.0227), at parity with HGB on AUROC (+0.0011, inside seed std) and ahead on F1
+(+0.0110). Full analysis and caveats: [projects/paper.md](projects/paper.md) §5.4.
 
 ## Final model without molecular descriptor
 

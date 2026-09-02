@@ -357,8 +357,8 @@ python scripts/retrain_on_trainval.py results/DGT/BBBP-DGT-Pipeline/ --include-t
 
 #### What the script does (either mode)
 
-1. Reads each seed's `<seed>/test/stats.json`, identifies the seed whose test metric is closest to the median across seeds (neither cherry-picked best nor worst).
-2. Reads that seed's `best_epoch` from `<seed>/test/predictions.pt`.
+1. Reads each seed's `<seed>/val/stats.json`, identifies the seed whose **best-validation** metric is closest to the median across seeds (neither cherry-picked best nor worst). Selection is on validation, never test — the deployment artifact carries no information from the held-out set.
+2. Takes that seed's best-validation epoch from the same record. Nothing under `<seed>/test/` is opened.
 3. Subprocesses `main.py` with `train.mode: dgt_retrain` (default) or `train.mode: dgt_retrain_with_test` (with `--include-test`), `seed=<chosen>`, `optim.max_epoch=<best_epoch+1>`. Both train modes live in [graphgps/train/dgt_retrain.py](../graphgps/train/dgt_retrain.py).
 4. Combines the selected splits into a single training loader, trains for the given budget, saves one checkpoint.
 
@@ -371,7 +371,7 @@ The three `final_model{,_with_test}.*` files at the run root form a **self-conta
 |---|---|---|
 | `final_model{,_with_test}.ckpt` | Model weights (the learned parameters from `torch.save`). | Loaded into the model via `load_state_dict()`. Without it, no inference. |
 | `final_model{,_with_test}.config.yaml` | Copy of the **pristine** YAML config from `configs/`. | Needed to **build the model architecture** (layer count, hidden dim, encoder stack, head type, …) *before* weights can be loaded. The auto-dumped `<run_dir>/config.yaml` cannot be reused — yacs strict-mode rejects its runtime-set keys (`run_dir`, `params`, `run_id`). |
-| `final_model{,_with_test}.json` | Manifest. | Records (a) **provenance** — per-seed test metrics, median, chosen seed, `best_epoch`, retrain budget, `train_mode`, `included_test_in_training` — so the selection rationale is auditable later; (b) `best_f1_threshold` (read from the chosen seed's `plots/summary.json` if present) so `predict.py --threshold optimal-f1` works on a deployment server *without* shipping the seed's `plots/` directory. |
+| `final_model{,_with_test}.json` | Manifest. | Records (a) **provenance** — `seed_selected_on: validation`, per-seed **val** metrics, median, chosen seed, `best_epoch`, retrain budget, `train_mode`, `included_test_in_training` — so the selection rationale is auditable later; (b) `best_f1_threshold` (read from the chosen seed's `plots/summary.json` if present) so `predict.py --threshold optimal-f1` works on a deployment server *without* shipping the seed's `plots/` directory. **Note:** that threshold is the one remaining test-derived quantity in the bundle — it is swept over test predictions by `analyze_run.py`. Metrics at the default 0.5 threshold are unaffected. |
 
 Worth the extra run only if you have a definite deployment target. For reporting / handoff, the median-seed checkpoint from the original dgt run is sufficient — the retrain is an optional "use all the labels for the final model" step.
 

@@ -3,8 +3,9 @@
 Working document for a publication on applying the Dual Graph Transformer (DGT) to
 ready-biodegradability classification, with a molecular-descriptor late-fusion ablation.
 
-**Status (2026-09-02):** validation phase complete; configuration selected on validation
-only; **test set not yet read**. Numbers below are validation unless explicitly labelled.
+**Status (2026-09-02):** configuration selected on validation with test suppressed; test set
+then read **once** for the selected configuration (§5.3). Headline: DGT reaches
+**F1 0.8610, ROC-AUC 0.9196** on the 278-molecule test set, exceeding both prior baselines.
 
 Related: [gwu.md](gwu.md) (earlier study on the *different* `biodeg_gwu` dataset —
 see §8 before citing it), [../dgt_porting_guide.md](../dgt_porting_guide.md) (protocol
@@ -151,10 +152,12 @@ The implementation was audited line-by-line against
 | 7 | Probabilities, not hard labels | **Pass** |
 | 8 | No de-duplication re-split | Pass — split used as published |
 
-Two items were identified as *not* satisfied by the deployment path and are documented as
-limitations rather than silently carried (§9): the deployment seed is chosen by median test
-score, and the deployment decision threshold is optimised on test predictions. Neither
-affects the 0.5-threshold metrics reported as headline results.
+Two items were initially *not* satisfied by the deployment path. The first — the deployment
+seed being chosen by median test score — was **fixed** (§9 item 3); seed and epoch budget are
+now both validation-derived. The second remains: the deployment decision threshold is
+optimised on test predictions (§9 item 4). It affects only
+`predict.py --threshold optimal-f1`; every metric reported in this document uses the fixed
+0.5 threshold and is unaffected.
 
 ---
 
@@ -180,6 +183,53 @@ contributes the metric at its own best-validation epoch.
 | `qm` | 0.8124, 0.8137, 0.8175, 0.8039 | 0.8808, 0.8845, 0.8843, 0.8822 |
 | `rdkit_fg` | 0.8202, 0.8121, 0.8084, 0.8249 | 0.8892, 0.8866, 0.8872, 0.8874 |
 | `qm_rdkit` | 0.8164, 0.8106, 0.8180, 0.8208 | 0.8865, 0.8877, 0.8810, 0.8859 |
+
+### 5.3 Test — selected configuration only
+
+`rdkit_fg` (non-GWU, 207 descriptors), read **once** after the selection in §6 was recorded.
+4 seeds, mean ± population std, threshold 0.5. Source:
+`results/DGT/BiodegNoInd-DGT-Pipeline-WithDesc-nongwu/agg/test/best.json`.
+
+| Metric | DGT (this work) |
+|---|---|
+| Accuracy | 0.8552 ± 0.0047 |
+| Precision | 0.8562 ± 0.0078 |
+| Recall | 0.8663 ± 0.0199 |
+| **F1** | **0.8610 ± 0.0066** |
+| **ROC-AUC** | **0.9196 ± 0.0027** |
+
+### 5.4 Comparison with prior models on the same 278-molecule test set
+
+References from [porting guide §3](../dgt_porting_guide.md). All at threshold 0.5, all on the
+identical fixed test split.
+
+| Model | Feature set | F1 | ROC-AUC |
+|---|---|---|---|
+| **DGT (this work)** | `rdkit_fg` | **0.8610** | **0.9196** |
+| HGB (gradient boosting) | `rdkit_fg` | 0.8500 | 0.9152 |
+| HGB | `qm_rdkit` | — | 0.9185 |
+| MPNN (chemprop) | `rdkit_fg` | 0.8522 | 0.8969 |
+| MPNN | `qm` | 0.8462 | 0.8969 |
+| MPNN | `qm_rdkit` | 0.8362 | 0.8911 |
+
+**DGT ranks first on both metrics.** Read carefully, though:
+
+- **vs MPNN — a clear win.** ROC-AUC +0.0227 over the best MPNN arm, roughly eight times
+  DGT's own seed std. F1 +0.0088. The graph transformer is decisively the better graph model
+  on this endpoint.
+- **vs HGB — a win on F1, a tie on ROC-AUC.** F1 +0.0110 over HGB's best (≈1.7 seed std);
+  ROC-AUC +0.0011 over HGB's best AUROC arm, which is well inside DGT's std of 0.0027 and
+  should be reported as parity, not superiority.
+- **Caveat on all comparisons.** The published HGB and MPNN figures are point estimates with
+  no reported dispersion, and both were selected by 5-fold CV on train while DGT was selected
+  on a single validation split (§9 item 1). With 278 test molecules, the sampling uncertainty
+  on any single accuracy estimate is roughly ±0.04 at 95 % — larger than every gap in the
+  table. Differences of ~1 point should be treated as suggestive.
+
+**Answering §1's question:** a graph transformer *does* close the MPNN-to-HGB gap on this
+endpoint — it matches descriptor gradient boosting on ranking quality and edges ahead on
+thresholded F1. It does so, however, largely on graph structure: the descriptor channel that
+was supposed to supply the missing composition signal contributes almost nothing (§7).
 
 ---
 
@@ -217,6 +267,15 @@ largest ROC-AUC standard deviation (0.0051); `rdkit_fg` is five times tighter (0
 effect does not carry over to F1, where `rdkit_fg` has the *largest* spread (0.0065). This
 asymmetry should not be over-interpreted from four seeds and is reported as an observation,
 not a claim.
+
+**Validation understates test performance here.** Test exceeds validation by a wide margin on
+both metrics (F1 0.8610 vs 0.8164; ROC-AUC 0.9196 vs 0.8876). This is the opposite of the
+usual direction and is not explained by optimism in the validation score, which is itself
+maximised over epochs. The likely causes are the small test set (278 molecules) and its
+composition: the test split is 51.8 % positive against 46.9 % in train. Validation was
+therefore a conservative selection signal, which does not undermine the selection — the
+ranking is what matters, not the level — but it means validation scores should not be quoted
+as performance estimates.
 
 **The two metrics disagree on the winner, and both top-two gaps are 0.0001.** ROC-AUC favours
 `rdkit_fg`, F1 favours `qm_rdkit`. With four seeds and differences three orders of magnitude
@@ -263,10 +322,11 @@ Stated explicitly so that reviewers and future work are not misled.
 2. **The test set has been scored 16 times** (4 configurations × 4 seeds) as an automatic
    part of each run, though never read during selection. Only the selected configuration's
    test metric should be reported as a headline; the others are ablation context.
-3. **Deployment seed is chosen by median test score.** The retraining utility selects the
-   seed whose test metric is closest to the median across seeds. Median rather than maximum
-   limits the bias, but the deployment artifact is test-informed. The reported 4-seed
-   mean ± std is unaffected.
+3. ~~Deployment seed is chosen by median test score.~~ **Resolved 2026-09-02.**
+   `retrain_on_trainval.py` now selects the median seed on **validation**
+   (`<seed>/val/stats.json`) and takes the retrain budget from that seed's best-validation
+   epoch. It no longer opens anything under `<seed>/test/`, and the manifest records
+   `seed_selected_on: validation`.
 4. **Deployment threshold is optimised on test.** The F1-optimal decision threshold embedded
    in the deployment manifest is swept over test predictions. Any F1, precision, or recall
    quoted *at that threshold on the same test set* is optimistically biased. All headline
@@ -326,11 +386,11 @@ graph-tool 2.45. Exact package set in `environment.yaml`.
 
 ## 11. Remaining work before submission
 
-- [ ] Read the test set **once** for the selected configuration; report accuracy, precision,
-      recall, F1 (at 0.5), ROC-AUC, and AUPRC.
-- [ ] Place those numbers against the HGB and MPNN references on the same 278-molecule test
-      set ([porting guide §3](../dgt_porting_guide.md)): HGB × `rdkit_fg` F1 0.8500 /
-      ROC-AUC 0.9152; MPNN × `rdkit_fg` F1 0.8522 / ROC-AUC 0.8969.
+- [x] Read the test set **once** for the selected configuration (§5.3, 2026-09-02).
+- [x] Place those numbers against the HGB and MPNN references (§5.4).
+- [ ] **AUPRC** — not yet computed for DGT; the baselines report it (HGB 0.9225 / 0.9249).
+      `scripts/analyze_run.py` emits `average_precision` per seed; aggregate across the 4
+      seeds to complete the comparison table.
 - [ ] Implement the 5-fold CV harness (porting guide §5) so a matched cross-model CV
       comparison becomes possible; re-run selection under it.
 - [ ] Increase seed count, or report CV mean ± std over folds, to resolve whether the

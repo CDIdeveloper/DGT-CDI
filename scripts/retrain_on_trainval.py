@@ -1,4 +1,4 @@
-"""Retrain on train+val combined — automatic median-seed selection.
+"""Retrain on train+val combined — automatic median-seed selection (on val).
 
 Usage:
     python scripts/retrain_on_trainval.py <run_dir>
@@ -7,10 +7,10 @@ Usage:
 run, e.g. `results/DGT/BBBP-DGT-Pipeline/`.
 
 What this script does:
-  1. Reads each seed's `<seed>/test/stats.json` and identifies the seed whose
-     test metric (cfg.metric_best) is closest to the median across seeds —
-     i.e. neither best (cherry-pick) nor worst.
-  2. Reads that seed's best-val epoch from `<seed>/test/predictions.pt`.
+  1. Reads each seed's `<seed>/val/stats.json` and identifies the seed whose
+     best-**validation** metric (cfg.metric_best) is closest to the median
+     across seeds — i.e. neither best (cherry-pick) nor worst.
+  2. Takes that seed's best-validation epoch from the same record.
   3. Subprocesses `main.py` with overrides — `seed=<chosen>`,
      `optim.max_epoch=<best_epoch+1>`, `train.mode=dgt_retrain` — to retrain
      on **train + val combined** for `best_epoch + 1` epochs.
@@ -22,9 +22,16 @@ What this script does:
      These three files together are everything `scripts/predict.py` needs to
      run inference on a different server.
 
-The test set is NOT touched at any point (in the default mode). The retrained
-model is for downstream deployment; use the original dgt-mode aggregated
-mean ± std as the reported generalisation estimate.
+Neither the test *split* nor any test *metric* is read in the default mode:
+seed choice, epoch budget and training data are all validation-derived, so the
+deployment artifact carries no information from the held-out set. Use the
+original dgt-mode aggregated mean ± std as the reported generalisation estimate.
+
+ONE EXCEPTION: `best_f1_threshold`, copied into the manifest from the chosen
+seed's `plots/summary.json`, is swept over TEST predictions by
+`scripts/analyze_run.py`. Metrics at the default 0.5 threshold are unaffected;
+only `predict.py --threshold optimal-f1` consumes it. See
+documents/projects/paper.md §9 item 4.
 """
 import argparse
 import json
@@ -33,10 +40,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import torch
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# metric_agg -> selector for "best validation epoch"
+_AGG = {'argmax': max, 'argmin': min}
 
 
 def _read_jsonl(path):
@@ -84,37 +93,50 @@ def _find_original_config(run_dir: Path) -> Path:
     return candidates[0]
 
 
-def _pick_median_seed(run_dir: Path, metric: str):
-    """Return (chosen_seed_name, chosen_metric, per_seed_dict, median)."""
+def _pick_median_seed(run_dir: Path, metric: str, agg: str):
+    """Pick the median-scoring seed on VALIDATION.
+
+    Returns (chosen_seed, chosen_metric, per_seed_dict, median, per_seed_epoch).
+
+    Selection is on validation, never test: the deployment artifact must not be
+    chosen using information from the held-out set (dgt_porting_guide.md §7
+    item 1). Each seed's score is the metric at its best-validation epoch — the
+    same quantity `dgt_train.py` uses to select that seed's checkpoint — read
+    from `<seed>/val/stats.json`. The seed's best epoch comes from the same
+    record, so this function never opens anything under `<seed>/test/`.
+    """
+    if agg not in _AGG:
+        raise ValueError(
+            f"Unsupported metric_agg '{agg}' (expected one of {sorted(_AGG)})."
+        )
+    selector = _AGG[agg]
     seed_dirs = _find_seed_dirs(run_dir)
-    per_seed = {}
+    per_seed, per_seed_epoch = {}, {}
     for d in seed_dirs:
-        stats_path = d / 'test' / 'stats.json'
+        stats_path = d / 'val' / 'stats.json'
         if not stats_path.is_file():
             raise FileNotFoundError(
                 f"Missing {stats_path}. The original run must have used "
                 "train.mode: dgt and completed successfully."
             )
-        stats = _read_jsonl(stats_path)
-        if len(stats) != 1:
-            raise RuntimeError(
-                f"Expected 1 line in {stats_path} (dgt mode writes one final "
-                f"test record), got {len(stats)}. The original run may have "
-                "used train.mode: custom instead of dgt."
-            )
-        if metric not in stats[0]:
+        records = _read_jsonl(stats_path)
+        if not records:
+            raise RuntimeError(f"{stats_path} is empty.")
+        if metric not in records[0]:
             raise KeyError(
                 f"Metric '{metric}' not found in {stats_path} (available "
-                f"keys: {list(stats[0].keys())})."
+                f"keys: {list(records[0].keys())})."
             )
-        per_seed[d.name] = float(stats[0][metric])
+        best = selector(records, key=lambda r: r[metric])
+        per_seed[d.name] = float(best[metric])
+        per_seed_epoch[d.name] = int(best['epoch'])
 
     values = sorted(per_seed.values())
     n = len(values)
     median = values[n // 2] if n % 2 \
         else 0.5 * (values[n // 2 - 1] + values[n // 2])
     chosen = min(per_seed, key=lambda s: abs(per_seed[s] - median))
-    return chosen, per_seed[chosen], per_seed, median
+    return chosen, per_seed[chosen], per_seed, median, per_seed_epoch
 
 
 def _load_descriptor_info(cfg: dict) -> dict:
@@ -201,6 +223,7 @@ def main():
     with open(dumped_cfg_path) as fh:
         cfg = yaml.safe_load(fh)
     metric_best = cfg.get('metric_best', 'auc')
+    metric_agg = cfg.get('metric_agg', 'argmax')
 
     # main.py reloads via yacs which rejects runtime-set keys in the dumped
     # config; point it at the pristine original from configs/ instead.
@@ -211,28 +234,19 @@ def main():
         raise FileNotFoundError(f"Missing original config: {orig_cfg_path}")
     print(f"Original config (used for retrain): {orig_cfg_path}")
 
-    # 1. Pick the median seed.
-    chosen, chosen_metric, per_seed, median = _pick_median_seed(
-        run_dir, metric_best
+    # 1. Pick the median seed — on VALIDATION, never test.
+    chosen, chosen_metric, per_seed, median, per_seed_epoch = _pick_median_seed(
+        run_dir, metric_best, metric_agg
     )
-    print(f"Per-seed test {metric_best}: {per_seed}")
-    print(f"Median {metric_best}: {median:.4f}")
-    print(f"Chosen seed: {chosen} (test {metric_best}={chosen_metric:.4f}, "
-          f"closest to median).")
+    print(f"Per-seed VAL {metric_best}: {per_seed}")
+    print(f"Median val {metric_best}: {median:.4f}")
+    print(f"Chosen seed: {chosen} (val {metric_best}={chosen_metric:.4f}, "
+          f"closest to median). Test set was not read.")
 
-    # 2. Read best_epoch from that seed's predictions.pt.
-    pred_path = run_dir / chosen / 'test' / 'predictions.pt'
-    if not pred_path.is_file():
-        raise FileNotFoundError(f"Missing {pred_path}")
-    pred = torch.load(pred_path, map_location='cpu', weights_only=False)
-    if 'best_epoch' not in pred:
-        raise KeyError(
-            f"'best_epoch' not in {pred_path}. The original run must have "
-            "completed under train.mode: dgt."
-        )
-    best_epoch = int(pred['best_epoch'])
+    # 2. That seed's best-validation epoch sets the retrain budget.
+    best_epoch = per_seed_epoch[chosen]
     retrain_epochs = best_epoch + 1
-    print(f"Median seed's best_epoch={best_epoch}; will retrain for "
+    print(f"Median seed's best-val epoch={best_epoch}; will retrain for "
           f"{retrain_epochs} epochs on train+val combined.")
 
     # 3. Subprocess main.py with overrides.
@@ -309,10 +323,11 @@ def main():
         'config_original': str(orig_cfg_path),
         'config_name': config_name,
         'metric_best': metric_best,
-        'per_seed_test_metric': per_seed,
-        'median_test_metric': median,
+        'seed_selected_on': 'validation',
+        'per_seed_val_metric': per_seed,
+        'median_val_metric': median,
         'chosen_seed': int(chosen),
-        'chosen_seed_test_metric': chosen_metric,
+        'chosen_seed_val_metric': chosen_metric,
         'best_epoch_on_original_val_split': best_epoch,
         'best_f1_threshold': best_f1_threshold,
         'retrain_epochs': retrain_epochs,
