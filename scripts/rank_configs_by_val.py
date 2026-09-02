@@ -154,6 +154,10 @@ def _crosscheck(seed_dir, best_val, tol=1e-6):
 
     Returns a warning string on mismatch, else None. Skipped when torch is
     unavailable or the file predates the stored field.
+
+    PRECONDITION: only call this when ranking on the config's own
+    `metric_best` — the stored value is that metric, so comparing it against a
+    score computed under a --metric override is meaningless (see _collect).
     """
     path = seed_dir / 'test' / 'predictions.pt'
     if torch is None or not path.is_file():
@@ -182,7 +186,8 @@ def _mean_std(values):
 def _collect(config_dir, metric_override):
     """Build one result row for a config-level run dir."""
     cfg = _load_config(config_dir)
-    metric = metric_override or cfg.get('metric_best', 'auc')
+    cfg_metric = cfg.get('metric_best', 'auc')
+    metric = metric_override or cfg_metric
     agg = cfg.get('metric_agg', 'argmax')
     if agg not in _AGG:
         raise ValueError(
@@ -194,13 +199,19 @@ def _collect(config_dir, metric_override):
     if not seeds:
         return None, []
 
+    # predictions.pt stores `best_val_metric` for the config's OWN metric_best,
+    # so the cross-check is only meaningful when we rank on that same metric.
+    # Under a --metric override (e.g. ranking on f1 while metric_best is auc)
+    # it would compare two different quantities and warn on every seed.
+    do_crosscheck = (metric == cfg_metric)
+
     warnings = []
     val_scores, test_scores, best_epochs = [], [], []
     for d in seeds:
         val, epoch = _val_score(d, metric, agg)
         val_scores.append(val)
         best_epochs.append(epoch)
-        warn = _crosscheck(d, val)
+        warn = _crosscheck(d, val) if do_crosscheck else None
         if warn:
             warnings.append(warn)
         test = _test_score(d, metric)
