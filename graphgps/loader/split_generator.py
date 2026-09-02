@@ -22,6 +22,10 @@ def prepare_splits(dataset):
         setup_scaffold_split(dataset)
     elif split_mode == 'random':
         setup_random_split(dataset)
+    elif split_mode.startswith('cv-train-'):
+        # NB: must be tested BEFORE the generic 'cv-' branch below, which would
+        # otherwise swallow it and re-fold the whole pool including test.
+        setup_cv_train_split(dataset, int(split_mode.rsplit('-', 1)[1]))
     elif split_mode.startswith('cv-'):
         cv_type, k = split_mode.split('-')[1:]
         setup_cv_split(dataset, cv_type, int(k))
@@ -217,6 +221,72 @@ def set_dataset_splits(dataset, splits):
 
     else:
         raise ValueError(f"Unsupported dataset task level: {task_level}")
+
+
+CV_TRAIN_RANDOM_STATE = 1
+
+
+def setup_cv_train_split(dataset, k):
+    """Stratified k-fold CV over the TRAIN+VAL pool only; test is untouched.
+
+    `split_mode: cv-train-<k>` + `dataset.split_index: <fold>`.
+
+    Differs from `setup_cv_split` in the one way that matters: that function
+    folds the **entire** dataset, which would readmit held-out test molecules
+    into training and destroy the fixed external split
+    (dgt_porting_guide.md §7 item 6). This one folds only the rows the loader
+    already tagged train/val, leaving `test_graph_index` exactly as emitted.
+
+    Fold `split_index` becomes validation; the other k-1 folds become training.
+    `random_state` is fixed at 1 to match the cross-model protocol in
+    dgt_porting_guide.md §2, so DGT sees the same folds as the other models
+    built on the same train parquet in the same row order.
+
+    Requires the loader to have set train/val/test_graph_index already (i.e.
+    `dataset.split_idxs` consumed by `set_dataset_splits`), which is the case
+    for every `split_mode: standard` dataset in this repo.
+    """
+    if cfg.dataset.task != 'graph':
+        raise NotImplementedError(
+            f"cv-train-{k} is implemented for graph-level tasks only, got "
+            f"task={cfg.dataset.task!r}."
+        )
+    split_index = cfg.dataset.split_index
+    if not 0 <= split_index < k:
+        raise IndexError(
+            f"dataset.split_index={split_index} out of range for cv-train-{k} "
+            f"(expected 0..{k - 1})."
+        )
+    for name in ('train_graph_index', 'val_graph_index', 'test_graph_index'):
+        if not hasattr(dataset.data, name):
+            raise ValueError(
+                f"Missing '{name}'. cv-train-{k} re-folds an existing "
+                f"train/val split, so the loader must emit the standard "
+                f"graph-index lists first."
+            )
+
+    # The CV pool is everything the loader did NOT tag as test.
+    pool = np.concatenate([
+        np.asarray(dataset.data['train_graph_index']),
+        np.asarray(dataset.data['val_graph_index']),
+    ])
+    pool.sort()  # stable, loader-order-independent fold assignment
+    test_index = np.asarray(dataset.data['test_graph_index'])
+
+    y = np.asarray(dataset.data.y).reshape(-1)[pool]
+    kf = StratifiedKFold(n_splits=k, shuffle=True,
+                         random_state=CV_TRAIN_RANDOM_STATE)
+    train_pos, val_pos = list(kf.split(np.zeros(len(pool)), y))[split_index]
+    train_index, val_index = pool[train_pos], pool[val_pos]
+
+    logging.info(
+        f"[cv-train-{k}] fold {split_index}: train n={len(train_index)}, "
+        f"val n={len(val_index)}, test n={len(test_index)} (test untouched); "
+        f"val positives {int(y[val_pos].sum())}/{len(val_pos)}."
+    )
+    set_dataset_splits(dataset,
+                       [train_index.tolist(), val_index.tolist(),
+                        test_index.tolist()])
 
 
 def setup_cv_split(dataset, cv_type, k):

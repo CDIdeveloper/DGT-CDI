@@ -86,7 +86,18 @@ Test-AUC ranking: **non-GWU (0.9004) > all (0.8966) > selected-94 (0.8864) > bas
 1. **The descriptor gain is entirely from the non-GWU (RDKit / functional-group) descriptors.** Non-GWU alone (+0.0183) beats *all* descriptors (+0.0145) with fewer features (207 vs 247) and a far tighter std (0.0004 vs 0.0027).
 2. **The GWU/QM descriptors do not help here — they hurt.** GWU-only (40) lands *below* baseline (−0.0093), and adding GWU on top of RDKit dilutes the result (all < non-GWU). So the 40 QM descriptors carry little biodegradability signal for the DGT late-fusion head and add noise.
 3. **SHAP-screened (94) helps modestly (+0.0043) but does not beat simply dropping GWU.** Consistent with (2): the SHAP screen (computed on the *analysis* model, over the qm_rdkit set) still retained QM descriptors the DGT head doesn't benefit from.
-4. **Recommendation:** for a deployable biodeg_gwu model, use the **non-GWU (RDKit) descriptor set** — best AUC, tightest variance, fewer features.
+4. **Recommendation (SUPERSEDED):** this study recommended the **non-GWU (RDKit) descriptor
+   set** for a deployable `biodeg_gwu` model, on the basis of best test AUC and tightest
+   variance. That recommendation was made on **test** scores and on the **`biodeg_gwu`**
+   dataset, and **no model was ever deployed from it.**
+
+   The deployed models are on the canonical `biodeg_gwu_no_ind` dataset and were selected on
+   validation — see [paper.md §10.1](paper.md) for the two bundles
+   (`biodeg-no-ind-dgt-nongwu-2026-09-02`, `biodeg-no-ind-dgt-graphonly-2026-09-02`), their
+   S3 location under `s3://cdi-lab-workspaces/ts_project_1/models/biodegradation/GWU/`, and
+   their measured thresholds. On that dataset the descriptor and graph-only arms are
+   statistically indistinguishable, and the graph-only model is deployed alongside because it
+   needs only SMILES at inference.
 
 **Caveat:** the SHAP ranking came from the analysis model, not DGT, so the selected-subset result (variant 5) is a heuristic. A DGT-native attribution (Grad-SAM / SHAP on the desc head) could screen differently — worth a follow-up if variant 5 is pursued further.
 

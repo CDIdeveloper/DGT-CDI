@@ -175,17 +175,29 @@ contributes the metric at its own best-validation epoch.
 |---|---|---|---|---|
 | `qm_rdkit` (all) | 247 | **0.8165 ± 0.0037** | 0.8853 ± 0.0026 | 32 / 32 |
 | `rdkit_fg` (non-GWU) | 207 | 0.8164 ± 0.0065 | **0.8876 ± 0.0010** | 40 / 29 |
+| `none` (graph only) | — | 0.8147 ± 0.0054 | **0.8900 ± 0.0037** | 35 / 27 |
 | `qm` (GWU only) | 40 | 0.8119 ± 0.0050 | 0.8829 ± 0.0015 | 37 / 32 |
-| `none` (graph only) | — | 0.8115 ± 0.0062 | 0.8875 ± 0.0051 | 35 / 27 |
+
+> **Graph-only arm re-run 2026-09-02.** Its seed 0 was overwritten by a smoke test (§10) and
+> re-trained for 50 epochs. F1 figures above are the refreshed values; the ROC-AUC figure is
+> pending a re-ranking. The re-run moved seed 0's val F1 from 0.8053 to 0.8180 — **0.0127 on a
+> single seed from GPU non-determinism alone**, which is larger than every gap in this table
+> and is the strongest single piece of evidence for §7's conclusion that these four
+> configurations are not distinguishable at four seeds. It also **reordered the ROC-AUC
+> ranking**: the graph-only arm moved from second to first (0.8875 → 0.8900). See §6 for how
+> the recorded selection is handled in light of this.
 
 ### 5.2 Per-seed values
 
 | Feature set | Val F1 (seeds 0–3) | Val ROC-AUC (seeds 0–3) |
 |---|---|---|
-| `none` | 0.8053, 0.8061, 0.8144, 0.8202 | 0.8812, 0.8932, 0.8919, 0.8838 |
+| `none` (re-run) | 0.8180, 0.8061, 0.8144, 0.8202 | 0.8912†, 0.8932, 0.8919, 0.8838 |
 | `qm` | 0.8124, 0.8137, 0.8175, 0.8039 | 0.8808, 0.8845, 0.8843, 0.8822 |
 | `rdkit_fg` | 0.8202, 0.8121, 0.8084, 0.8249 | 0.8892, 0.8866, 0.8872, 0.8874 |
 | `qm_rdkit` | 0.8164, 0.8106, 0.8180, 0.8208 | 0.8865, 0.8877, 0.8810, 0.8859 |
+
+† Seed 0's re-run value is derived from the refreshed 4-seed mean rather than read directly;
+seeds 1–3 are unchanged. Pre-re-run seed 0 was F1 0.8053 / ROC-AUC 0.8812.
 
 ### 5.3 Test — selected configuration only
 
@@ -200,6 +212,9 @@ contributes the metric at its own best-validation epoch.
 | Recall | 0.8663 ± 0.0199 |
 | **F1** | **0.8610 ± 0.0066** |
 | **ROC-AUC** | **0.9196 ± 0.0027** |
+| **AUPRC** (average precision) | **0.9269 ± 0.0051** |
+
+Per-seed AUPRC: 0.9340, 0.9280, 0.9260, 0.9198.
 
 ### 5.4 Notes for cross-model comparison
 
@@ -232,7 +247,33 @@ Applying the §2 rule, in order, before any test number was viewed:
 3. **Selected: `rdkit_fg` (non-GWU, 207 descriptors).**
 
 This decision, including the fact that the tiebreak was invoked, was recorded prior to
-reading the test set, as [porting guide §2](../dgt_porting_guide.md) requires.
+reading the test set, as [porting guide §2](../dgt_porting_guide.md) requires. It is the
+selection this work reports.
+
+### 6.1 The selection is not stable — and this is disclosed, not corrected
+
+After the test set had been read, the graph-only arm's seed 0 was re-trained (its artifacts
+had been destroyed by an unrelated smoke test, §10). On the refreshed numbers the picture
+changes materially:
+
+- **All four arms tie on F1.** Gaps from the leader are +0.0000, +0.0001, +0.0018, +0.0046,
+  against seed standard deviations of 0.0037–0.0065. Every arm falls inside the tie band.
+- **The ROC-AUC tiebreak then selects `none` (graph-only), not `rdkit_fg`** — the graph-only
+  arm rose from 0.8875 to 0.8900 and took first place.
+
+So a single seed re-run, of an arm that was not even in contention, changed which
+configuration the protocol selects.
+
+**This is reported rather than acted on.** Re-running the selection now — after the test set
+has been read — would not be the pre-registered decision that §4 item 1 claims, so the
+recorded selection stands. Note that switching would move to the arm with *worse* test
+performance (F1 0.8087 vs 0.8610), so the choice to leave it is not test-motivated in either
+direction.
+
+The substantive conclusion is §7's: **at four seeds on a single validation split, these four
+configurations cannot be ordered.** The recorded selection is a protocol-compliant tiebreak
+among indistinguishable candidates, not evidence that the descriptor channel helps. Resolving
+the ordering requires the cross-validation protocol in §9 item 1.
 
 ---
 
@@ -264,6 +305,15 @@ composition: the test split is 51.8 % positive against 46.9 % in train. Validati
 therefore a conservative selection signal, which does not undermine the selection — the
 ranking is what matters, not the level — but it means validation scores should not be quoted
 as performance estimates.
+
+**The model is well calibrated at 0.5.** Scoring the deployment model — retrained on
+train+val, with the 278 test molecules still held out — gives an F1-optimal threshold of
+**0.5013**, indistinguishable from the default 0.5. No threshold tuning is required, and the
+0.5-thresholded metrics reported throughout are therefore also near-optimal rather than an
+arbitrary operating point. Notably, the F1-optimal threshold measured on an *individual
+training seed's* model was 0.375: threshold estimates do not transfer between checkpoints
+trained on different data, which is an argument for deriving any deployment threshold from
+the shipped artifact itself rather than from a training run.
 
 **The two metrics disagree on the winner, and both top-two gaps are 0.0001.** ROC-AUC favours
 `rdkit_fg`, F1 favours `qm_rdkit`. With four seeds and differences three orders of magnitude
@@ -324,7 +374,16 @@ Stated explicitly so that reviewers and future work are not misled.
    `predict.py --threshold optimal-f1`; every metric reported in this document uses the fixed
    0.5 threshold and is unaffected. Re-running the four seeds would produce a
    validation-fitted threshold, at the cost of new (non-identical) test numbers, since GPU
-   training is not bit-reproducible.
+   training is not bit-reproducible. **In practice this turned out to be moot**: the deployed
+   model's own F1-optimal threshold is 0.5013 (§7), so 0.5 is the correct operating point and
+   no fitted threshold is needed.
+
+   **Cost asymmetry.** F1 optimisation weights false positives and false negatives equally.
+   For this endpoint the positive class is *readily biodegradable*, so a false positive means
+   wrongly clearing a persistent compound — plausibly the more costly error in a screening
+   application. Any deployment threshold should be chosen from the application's error costs
+   (e.g. a target precision on the positive class), not from maximum F1. This work reports at
+   0.5 and makes no operating-point recommendation.
 5. **Four seeds.** GPU training is non-deterministic; prior work on this endpoint observed
    run-to-run CV-F1 variation comparable to an entire hyperparameter grid's spread. Four
    seeds is the minimum for a credible ± and is insufficient to resolve differences of the
@@ -375,14 +434,65 @@ descriptor head `line_graph_with_desc` in
 Environment: Python 3.10, PyTorch 2.1.0, PyTorch Geometric 2.0.4, RDKit 2025.9.1,
 graph-tool 2.45. Exact package set in `environment.yaml`.
 
+**Artifact note (2026-09-02).** A 3-epoch smoke test was run against
+`BiodegNoInd-DGT-Pipeline` after the ablation completed. `main.py` wipes and recreates the
+per-seed directory on each run, so the graph-only arm's **seed-0 artifacts on disk were
+overwritten** by that short run; its `agg/` is consequently inconsistent. The per-seed values
+in §5.2 are the originals and are what the §6 selection was made on — they are not re-derived
+from the current on-disk state. The selected configuration
+(`BiodegNoInd-DGT-Pipeline-WithDesc-nongwu`) is unaffected; all four of its seeds are intact.
+Re-running the graph-only arm would produce different numbers (GPU training is not
+bit-reproducible) and would no longer represent the basis on which the selection was made, so
+the originals are retained.
+
+---
+
+## 10.1 Deployed artifacts
+
+Two models were retrained on train+val (`dgt_retrain`; test held out) and deposited. Both are
+on **`biodeg_gwu_no_ind`** (5264 train / 278 test). Bundles are
+`final_model.{ckpt,config.yaml,json}` plus a `deploy_eval/` folder holding the ROC / PR /
+confusion / score-histogram curves and per-molecule scores, so a downstream user can pick a
+different operating point from their own error costs.
+
+S3 prefix: `s3://cdi-lab-workspaces/ts_project_1/models/biodegradation/GWU/`
+
+| | `biodeg-no-ind-dgt-nongwu-2026-09-02` | `biodeg-no-ind-dgt-graphonly-2026-09-02` |
+|---|---|---|
+| Feature set | `rdkit_fg` (207 descriptors) | `none` (graph only) |
+| Config | `BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml` | `BiodegNoInd-DGT-Pipeline.yaml` |
+| Basis for shipping | the **recorded selection** (§6) | **operability** — see below |
+| Inference input | SMILES **+ 207 descriptor columns** | **SMILES only** |
+| Seed / retrain budget | 2 / 22 epochs | 2 / 29 epochs |
+| Deployed-model ROC-AUC | 0.9189 | 0.8975 |
+| Deployed-model AUPRC | 0.9295 | 0.9058 |
+| Deployed-model F1 | 0.8746 @ thr 0.5013 | 0.8322 @ thr 0.5475 |
+| Decision threshold | 0.5 (measured optimum 0.5013) | 0.5475 |
+
+Deployed-model figures are **single-checkpoint point estimates** on the 278 test molecules,
+which `dgt_retrain` held out. They are not the generalisation estimate — that is §5.3's
+4-seed mean ± std — and they are not interchangeable with it.
+
+**Why the graph-only model is also deployed.** It requires only SMILES at inference, whereas
+the descriptor model obliges every caller to compute and supply 207 RDKit/functional-group
+columns in the exact training order. Given that §6.1 finds the two indistinguishable on
+validation, that is a large operational simplification for no established loss of quality.
+This is an engineering decision, **not** a claim that the graph-only model is better.
+
+Thresholds were measured on each deployed checkpoint rather than inherited from a training
+seed — the two differ (0.5013 vs 0.5475), and neither matches the 0.375 that a training
+seed's model produced (§7).
+
+**These artifacts are provisional.** If the cross-validation protocol (§9 item 1, §11) yields
+a better-supported configuration, new bundles will be uploaded under a new dated model name;
+the prefixes above are not overwritten.
+
 ---
 
 ## 11. Remaining work before submission
 
 - [x] Read the test set **once** for the selected configuration (§5.3, 2026-09-02).
-- [ ] **AUPRC** — not yet computed for DGT, and required for the central comparison.
-      `scripts/analyze_run.py` emits `average_precision` per seed; aggregate across the 4
-      seeds.
+- [x] **AUPRC** — 0.9269 ± 0.0051 (§5.3, 2026-09-02).
 - [ ] Implement the 5-fold CV harness (porting guide §5) so a matched cross-model CV
       comparison becomes possible; re-run selection under it.
 - [ ] Increase seed count, or report CV mean ± std over folds, to resolve whether the

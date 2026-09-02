@@ -139,3 +139,53 @@ vs the no-descriptor baseline (AUC 0.8821 ± 0.0034): **+0.0183 AUC**, tightest 
 **Deployment bundle (predict.py contract).** `retrain_on_trainval.py` embeds `descriptor_columns` (the 207 selected names, in training order) + `desc_stats` (train-split μ/σ) + `desc_dim` into `final_model.json`. At inference, `predict.py` reads those, requires the input table to carry the 207 descriptor columns (matched by name, reordered to training order, z-scored with the persisted stats); extra columns (e.g. the 40 `_gwu`) are ignored. The `final_model.{ckpt,config.yaml,json}` files play the same roles as in the no-descriptor table above, except `final_model.json` is now **required** (carries the descriptor contract, not just `best_f1_threshold`).
 
 
+
+---
+
+### biodeg_gwu_no_ind (canonical dataset) **with the non-GWU (RDKit) descriptor set** — DEPLOYED
+
+The validation-selected winner (see the ablation table above and
+[projects/paper.md](projects/paper.md)). This is the model card for the shipped artifact.
+
+| Field | Value |
+|---|---|
+| Model name | `biodeg-no-ind-dgt-nongwu-2026-09-02` |
+| Dataset | `biodeg_gwu_no_ind` (5264 train / 278 test) |
+| Config | [BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml) |
+| Retrain mode | `dgt_retrain` — train+val combined (4738+526=5264); **test held out** |
+| Seed selection | **validation** (`seed_selected_on: validation`); chosen seed 2, val AUC 0.88715 |
+| Retrain budget | 22 epochs (chosen seed's best-val epoch 21, +1) |
+| desc_dim | 207 (`desc_exclude: ['_gwu']`) |
+| Cloud bundle URI | `s3://cdi-lab-workspaces/ts_project_1/models/biodegradation/GWU/biodeg-no-ind-dgt-nongwu-2026-09-02` |
+| Date | 2026-09-02 |
+
+**Two different numbers — do not conflate them.**
+
+*Reported generalisation estimate* (what the paper cites) — the original 4-seed run at
+threshold 0.5, mean ± population std:
+
+| Accuracy | Precision | Recall | F1 | ROC-AUC | AUPRC |
+|---|---|---|---|---|---|
+| 0.8552 ± 0.0047 | 0.8562 ± 0.0078 | 0.8663 ± 0.0199 | 0.8610 ± 0.0066 | 0.9196 ± 0.0027 | 0.9269 ± 0.0051 |
+
+*Shipped-artifact measurement* — the single retrained model scored on the 278 test molecules,
+which it never saw (`dgt_retrain` uses train+val only). A point estimate for this specific
+checkpoint, with no dispersion; it is **not** the generalisation estimate:
+
+| ROC-AUC | AUPRC | F1 @ 0.5013 | Accuracy | Precision | Recall |
+|---|---|---|---|---|---|
+| 0.9189 | 0.9295 | 0.8746 | 0.8669 | 0.8543 | 0.8958 |
+
+Confusion matrix at 0.5013 — TN 112, FP 22, FN 15, TP 129.
+
+**Decision threshold: use 0.5.** The F1-optimal threshold measured on the deployed model is
+**0.5013**, i.e. 0.5 to within the gap between two adjacent predicted scores. The retrained
+model is well calibrated and needs no threshold tuning.
+
+⚠️ The `best_f1_threshold` written into `final_model.json` by `retrain_on_trainval.py` was
+**0.375**, inherited from seed 2's *original* (train-only, 50-epoch) model via
+`analyze_run.py`. That model is not the shipped one and its calibration does not transfer.
+**Overwrite the manifest value with 0.5013 before uploading**, or `predict.py
+--threshold optimal-f1` will operate well below the optimum — which, for this endpoint,
+biases toward the more dangerous error (see the note on cost asymmetry in
+[projects/paper.md](projects/paper.md) §9).
