@@ -1,0 +1,96 @@
+# biodeg_gwu_no_ind — GWU/QM descriptors ONLY (columns containing `_gwu`).
+#
+# Feature set `qm` in documents/dgt_porting_guide.md §1 (40 columns).
+# Same backbone/optimizer as the baseline; only the descriptor channel differs:
+#   - gnn.head: line_graph_with_desc
+#   - dataset.desc_include: ['_gwu']  -> keep only the 40 QM columns
+#   - dataset.standardize_desc: True  -> z-score (train-split stats); separate
+#     processed cache (hash-keyed on the resolved column list)
+#
+# Why the include pattern is safe here: id/metadata columns were renamed
+# `*_gwu` -> `*_fromgwu` upstream, and `_desc_select` matches by SUBSTRING.
+# `'_gwu' in '_fromgwu'` is False (the char before `gwu` is `m`, not `_`), so
+# this resolves to exactly the 40 real QM features.
+#
+# Prior (biodeg_gwu, test-selected): GWU-only scored BELOW the graph-only
+# baseline. Treat that as a hypothesis to re-test here on val, not a result.
+
+out_dir: results/DGT
+metric_best: auc
+metric_agg: argmax
+wandb:
+  use: False
+  project: BiodegGwuNoInd-WithDesc-gwu
+dataset:
+  format: PyG-biodeg_gwu_no_ind
+  name: biodeg_gwu_no_ind
+  task: graph
+  task_type: classification_binary
+  transductive: False
+  split_mode: standard
+  node_encoder: True
+  node_encoder_name: LinearNode
+  node_encoder_bn: False
+  edge_encoder: True
+  edge_encoder_shared: True
+  edge_encoder_name: LinearEdge+RWSE-SPDE
+  edge_encoder_num_types: 3
+  edge_encoder_bn: False
+  spd: True
+  spd_max_length: 8
+  rings: True
+  rings_max_length: 18
+  rings_coalesce_edges: False
+  desc_dim: 40              # verified: 247 total = 40 gwu + 207 non-gwu
+  standardize_desc: True
+  desc_include: ['_gwu']    # keep only columns whose name contains '_gwu'
+share:
+  dim_in: 9
+posenc_RWSE:
+  enable: True
+  enable_edges: True
+  kernel:
+    times_func: range(1,17)
+  model: Linear
+  dim_pe: 64
+  raw_norm_type: None
+train:
+  mode: dgt
+  batch_size: 32
+  eval_period: 1
+  enable_ckpt: True
+  ckpt_best: True
+  ckpt_clean: True
+model:
+  type: DGTModel
+  loss_fun: cross_entropy
+  edge_decoding: dot
+  graph_pooling: add
+gt:
+  layer_type: None+DGT
+  layers: 4
+  n_heads: 16
+  dim_hidden: 128  # must equal gnn.dim_inner
+  dropout: 0.0
+  attn_dropout: 0.3
+  layer_norm: False
+  batch_norm: True
+gnn:
+  head: line_graph_with_desc
+  desc_proj_dim: 128
+  layers_pre_mp: 0
+  layers_post_mp: 3
+  dim_inner: 128  # must equal gt.dim_hidden
+  batchnorm: True
+  act: gelu
+  dropout: 0.0
+  agg: mean
+  normalize_adj: False
+optim:
+  clip_grad_norm: True
+  optimizer: adamW
+  weight_decay: 1e-2
+  base_lr: 0.0004
+  max_epoch: 50
+  scheduler: cosine_with_warmup
+  num_warmup_epochs: 10
