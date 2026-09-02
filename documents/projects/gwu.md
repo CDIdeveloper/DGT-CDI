@@ -1,5 +1,30 @@
 # Project: GWU biodegradability — molecular-descriptor-type study
 
+> ## ⚠️ Superseded — read before citing any number below
+>
+> **1. Different dataset.** This study is on **`biodeg_gwu`**, which retains
+> inherently-biodegradable (InD) rows: **5742 train / 300 test**. The canonical
+> cross-model dataset in [dgt_porting_guide.md §1](../dgt_porting_guide.md) is
+> **`biodeg_gwu_no_ind`** — **5264 train / 278 test**. The test AUCs below are on a
+> **300-molecule** test set and are therefore **not comparable** to the HGB / MPNN
+> figures in porting-guide §3, which are all on the 278-molecule set.
+>
+> **2. Test-selected.** Both the feature-set ranking below *and* the architecture sweep
+> that produced the shared baseline were decided on **test** ROC-AUC read from
+> `agg/test/best.json`. That is the selection procedure porting-guide §2 explicitly
+> prohibits ("never re-pick the headline by the test score"). The reported deltas are
+> therefore optimistically biased as selection estimates.
+>
+> **3. The main conclusion does not replicate.** Re-derived on validation, on the
+> corrected `biodeg_gwu_no_ind` dataset, the non-GWU descriptor gain collapses from
+> **+0.0183 to +0.0001** on ROC-AUC — see [paper.md](paper.md) §8.
+>
+> **What still stands:** the qualitative finding that **QM (`_gwu`) descriptors do not
+> help** reproduces on the corrected dataset under validation-based selection.
+>
+> Kept as a record of the work and of the methodological lesson. For current results use
+> [paper.md](paper.md).
+
 > **Goal:** compare DGT performance on **biodeg_gwu** across different *types* of
 > molecular descriptors, fused at the head (late fusion, `line_graph_with_desc`).
 > An *application* of the Phase-2 descriptor pipeline ([pr-1 log](../log/pr-1-mol-desc.md),

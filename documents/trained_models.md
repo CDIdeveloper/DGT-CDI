@@ -2,11 +2,26 @@
 
 Two tables — **HPO sweeps** (one per dataset × round; used to pick a winning config) and **Final models** (deployment-ready models produced by retraining on the winner). For the workflow that produces these entries, see [modeling_routine.md → Step 6 / Step 7](modeling_routine.md#step-6--iterate-hpo-across-configs-if-exploring-hyperparameters).
 
+> ### ⚠️ Two datasets live in this file — do not compare across them
+>
+> | Dataset | Rows (train / test) | Notes |
+> |---|---|---|
+> | `biodeg_gwu` | 5742 / **300** | InD rows retained. **Not** the porting-guide dataset. |
+> | `biodeg_gwu_no_ind` | 5264 / **278** | InD rows removed. The canonical cross-model dataset ([dgt_porting_guide.md §1](dgt_porting_guide.md)). |
+>
+> Only `biodeg_gwu_no_ind` numbers are comparable to the HGB / MPNN references in
+> porting-guide §3. In addition, **every `biodeg_gwu` row below was selected on test**
+> — the round-1 winner and the descriptor-variant headline were both picked from
+> `agg/test/best.json`, which porting-guide §2 prohibits. Treat those rows as a record
+> of what was run, not as validated results. See [projects/paper.md](projects/paper.md) §8.
+
 ## HPO sweeps for models without molecular descriptor
 
 One table per `(dataset, round)`. Each row is one variant; the **baseline** row sits at the top so every variant reads against a single reference. Each round changes one hyperparameter at a time from the current baseline (so a clear delta is attributable to that one change).
 
 ### biodeg_gwu — round 1
+
+> ⚠️ Dataset `biodeg_gwu` (300-row test); winner selected on **test**. See the banner at the top of this file.
 
 | Variant | Config | Change vs baseline | Test AUC (mean ± std, 4 seeds) | Test F1 (mean) | Test accuracy (mean) | Best-val epoch (median) | Δ Test AUC vs baseline | Notes |
 |---|---|---|---|---|---|---|---|---|
@@ -56,6 +71,27 @@ Baseline-only (no HPO planned for this dataset yet — establishing a no-descrip
 | baseline | [Biodeg-DGT-Pipeline.yaml](../configs/biodegradability/Biodeg-DGT-Pipeline.yaml) | — | 0.9007 ± 0.0024 | 0.7918 | 0.8335 | 33 | 0 | run date 2026-06-08; git SHA `c1c5e1a`. precision 0.7699, recall 0.8160. batch_size=16 (T4 OOM at 32). Data: 8054 mols, ~39–41% pos, desc_dim=216. |
 
 **Cross-dataset note (not a clean single-knob comparison — different data + smaller batch):** biodeg's baseline AUC (0.9007 ± 0.0024) is **+0.0186** over the biodeg_gwu baseline (0.8821 ± 0.0034) — biodeg appears to be a modestly easier/cleaner task at this scale. Tighter std too (0.0024 vs 0.0034). Healthy result; no `loss_fun` change was needed (class balance ~39–41% positive across all splits).
+
+### biodeg_gwu_no_ind — descriptor ablation (validation-selected)
+
+The canonical dataset (5264 train / 278 test). Unlike every table above, **the winner here
+was selected on validation with test suppressed** — porting-guide §2 protocol. Full write-up,
+per-seed values, methods and limitations: [projects/paper.md](projects/paper.md).
+
+Validation, 4 seeds, mean ± population std. F1 primary, ROC-AUC tiebreak.
+
+| Feature set | Config | desc_dim | Val F1 | Val ROC-AUC |
+|---|---|---|---|---|
+| `rdkit_fg` (non-GWU) ← **selected** | [BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml) | 207 | 0.8164 ± 0.0065 | **0.8876 ± 0.0010** |
+| `qm_rdkit` (all) | [BiodegNoInd-DGT-Pipeline-WithDesc.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline-WithDesc.yaml) | 247 | **0.8165 ± 0.0037** | 0.8853 ± 0.0026 |
+| `qm` (GWU only) | [BiodegNoInd-DGT-Pipeline-WithDesc-gwu.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline-WithDesc-gwu.yaml) | 40 | 0.8119 ± 0.0050 | 0.8829 ± 0.0015 |
+| `none` (graph only) | [BiodegNoInd-DGT-Pipeline.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline.yaml) | — | 0.8115 ± 0.0062 | 0.8875 ± 0.0051 |
+
+**Selection (recorded 2026-09-02, before any test number was read):** F1 top-two differ by
+0.0001, inside both seed stds → tie → broken on ROC-AUC → **`rdkit_fg`**.
+
+**Test metrics: not yet read.** Fill the Final-models row below only after the single test
+read for the selected config.
 
 ## Final model without molecular descriptor
 

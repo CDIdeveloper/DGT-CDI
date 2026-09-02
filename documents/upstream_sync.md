@@ -94,6 +94,7 @@ Eight files. Ordered by merge risk, highest first.
 | [graphgps/encoder/linear_edge_encoder.py](../graphgps/encoder/linear_edge_encoder.py) | +7 −0 | two `elif` branches for `PyG-biodeg_gwu` / `PyG-biodeg` | Low |
 | [graphgps/config/custom_gnn_config.py](../graphgps/config/custom_gnn_config.py) | +6 −0 | `gnn.desc_proj_dim`, appended | Low |
 | [main.py](../main.py) | +5 −0 | total-runtime log line | Low |
+| [readme.md](../readme.md) | +23 −0 | "DGT-CDI fork" pointer section appended at the end (2026-08-31) | Low — appended after their last line, so a conflict is unlikely; if one occurs, keep both |
 | [graphgps/\_\_init\_\_.py](../graphgps/__init__.py) | +2 −2 | commented out `from .pooling import *` and `from .stage import *` | Low — see note |
 
 Also: `imgs/dgt.png` replaced (binary), and `chiro3d_molecule_net.py` → `chiral3d_molecule_net.py`

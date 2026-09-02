@@ -1,10 +1,45 @@
 # Session state
 
 > Living "you-are-here" doc. Updated at the end of each session before context auto-compacts.
-> Durable docs ([overview.md](overview.md), [tech.md](tech.md), [modeling_routine.md](modeling_routine.md), [trained_models.md](trained_models.md), [config_reference.md](config_reference.md), [graph_transformer.md](graph_transformer.md)) describe *how* the project works. This doc captures *where it is right now*.
-> PR-in-progress records: [adr/0001-pr-mol-desc.md](adr/0001-pr-mol-desc.md), [log/pr-1-mol-desc.md](log/pr-1-mol-desc.md), [projects/gwu.md](projects/gwu.md).
+> Durable docs ([overview.md](overview.md), [tech.md](tech.md), [modeling_routine.md](modeling_routine.md), [trained_models.md](trained_models.md), [config_reference.md](config_reference.md), [graph_transformer.md](graph_transformer.md), [dgt_porting_guide.md](dgt_porting_guide.md), [upstream_sync.md](upstream_sync.md)) describe *how* the project works. This doc captures *where it is right now*.
+> PR-in-progress records: [adr/0001-pr-mol-desc.md](adr/0001-pr-mol-desc.md), [log/pr-1-mol-desc.md](log/pr-1-mol-desc.md), [projects/gwu.md](projects/gwu.md), [projects/paper.md](projects/paper.md).
 
-**Last updated:** 2026-06-10 (end of session)
+**Last updated:** 2026-09-02
+
+---
+
+## Current focus — `biodeg_gwu_no_ind` (2026-08-31 → 09-02)
+
+**Where we are:** the canonical dataset (5264 train / 278 test, InD removed) is onboarded and
+the 4-arm descriptor ablation is complete. The winner was selected **on validation with test
+suppressed** — the first selection in this project made under the porting-guide §2 protocol.
+Full write-up: **[projects/paper.md](projects/paper.md)** (paper base doc: methods, results,
+per-seed values, leakage audit, limitations).
+
+- **Selected config:** `BiodegNoInd-DGT-Pipeline-WithDesc-nongwu` (207 RDKit/fg descriptors).
+  F1 top-two tied within seed std (0.8165 vs 0.8164) → broken on ROC-AUC (0.8876 vs 0.8853).
+  Recorded 2026-09-02, before any test number was read.
+- **Headline finding:** the descriptor channel is ~neutral here (best F1 +0.0050 over
+  graph-only, ROC-AUC +0.0001) — the earlier +0.0183 in [projects/gwu.md](projects/gwu.md)
+  does **not** replicate once selection moves off the test set.
+- **Test set: not yet read** for the selected config. That is the immediate next action.
+
+**Built this session:** `biodeg_gwu_no_ind` loader + format registration + 4 configs;
+[scripts/rank_configs_by_val.py](../scripts/rank_configs_by_val.py) (validation-based config
+ranking, dataset guard, F1/AUC override); [upstream_sync.md](upstream_sync.md) (fork
+provenance + merge checklist); modeling_routine Step 0 (dataset onboarding) and a rewritten
+Step 6 (select on validation, not test); dataset/test-selection warnings on
+[trained_models.md](trained_models.md) and [projects/gwu.md](projects/gwu.md).
+
+**Next actions, in order:**
+1. Step 7 for the selected config — `analyze_run.py` per seed, then `retrain_on_trainval.py`;
+   read `agg/test/best.json` **once** and record it in paper.md §11 and trained_models.md.
+2. Upload the deployment bundle to S3, fill the Final-models row.
+3. Open items ranked in paper.md §9 — the 5-fold CV harness (porting guide §5) is the
+   highest-value one; it is what makes a matched cross-model comparison possible.
+
+**Note:** everything below this section predates the `biodeg_gwu_no_ind` work and refers to
+the older `biodeg_gwu` dataset (300-row test, test-selected). Kept for history.
 
 ---
 

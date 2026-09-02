@@ -79,8 +79,8 @@ Default path conventions when running `python main.py --cfg <cfg> ...`. Substitu
 | **Per-sample test predictions** (raw `y_true`, `y_pred_score`) | Only with `train.mode: dgt` | `results/DGT/<config_name>/<seed>/test/predictions.pt` |
 | **Plots** (ROC, PR, confusion matrix, scatter, residuals) | Generated post-hoc | `results/DGT/<config_name>/<seed>/plots/*.png` (run `scripts/analyze_run.py`) |
 | **Deployment bundle** (ckpt + config + manifest) | Written by `scripts/retrain_on_trainval.py` | `results/DGT/<config_name>/final_model{,_with_test}.{ckpt,config.yaml,json}` |
-| **HPO sweep records** | Hand-curated per round | [trained_models.md → HPO sweeps](trained_models.md#hpo-sweeps) (one table per dataset × round; fill-in commands in Step 6) |
-| **Final-model records** | Hand-curated per deployment | [trained_models.md → Final models](trained_models.md#final-models) (one row per deployed model; fill-in commands in Step 7) |
+| **HPO sweep records** | Hand-curated per round | [trained_models.md → HPO sweeps](trained_models.md#hpo-sweeps-for-models-without-molecular-descriptor) (one table per dataset × round; fill-in commands in Step 6) |
+| **Final-model records** | Hand-curated per deployment | [trained_models.md → Final models](trained_models.md#final-model-without-molecular-descriptor) (one row per deployed model; fill-in commands in Step 7) |
 | **Predictions on new SMILES** | Run `scripts/predict.py` | output CSV at the path you pass via `--output-csv` |
 | W&B live metrics (opt-in) | Yes (if `wandb.use: True`) | the W&B dashboard for the configured project |
 
@@ -365,7 +365,7 @@ python scripts/retrain_on_trainval.py results/DGT/BBBP-DGT-Pipeline/ --include-t
 Outputs:
 - `<run_dir>/final{,_with_test}/<config_name>/<chosen_seed>/ckpt/<final_epoch>.ckpt` — the retrained model (where main.py writes it; the three `final_model.*` files below are convenience copies sitting at the run root).
 
-The three `final_model{,_with_test}.*` files at the run root form a **self-contained deployment bundle**. Copy the trio to any other server and feed them to `scripts/predict.py` (see [Step 7 — Predict on new data](#step-7--predict-on-new-data)). Each file has a distinct purpose:
+The three `final_model{,_with_test}.*` files at the run root form a **self-contained deployment bundle**. Copy the trio to any other server and feed them to `scripts/predict.py` (see [Step 8 — Predict on new data](#step-8--predict-on-new-data)). Each file has a distinct purpose:
 
 | File | What it is | Why all three are needed |
 |---|---|---|
@@ -384,8 +384,27 @@ For a single config, you stop after Step 5. Most real work involves comparing se
 1. **Define the round's variants** — usually 1-3 changes from the current baseline, each changing **one hyperparameter at a time** (so improvements/regressions are cleanly attributable). See [Hyperparameter exploration](#hyperparameter-exploration) for which knobs matter most (Tier 1 first; Tier 2 only after Tier 1 plateaus).
 2. **Save each variant as its own YAML** under `configs/<area>/<base-name>-<suffix>.yaml`. The suffix encodes the change (e.g. `-L6`, `-dim256`, `-lr1e3`). One YAML = one row in the HPO table.
 3. **Run each variant**: `python main.py --cfg <yaml> --repeat 4 seed 0 wandb.use False`. Each lands in its own `results/DGT/<config_name>/` directory — no collision, no cleanup between variants.
-4. **Fill in the HPO sweeps table** in [trained_models.md](trained_models.md#hpo-sweeps) — one row per variant. **Do not run `scripts/analyze_run.py` here**: all the values needed for cross-variant comparison are already in the per-config `agg/test/best.json` written automatically at the end of each multi-seed run. Plots and the optimal-F1 threshold are only needed for the **winner** — those come in Step 7.
-5. **Decide the winner** using the interpretation rule below.
+4. **Select the winner on VALIDATION, before looking at any test number** — see [Selecting the winner](#selecting-the-winner-on-validation) below. Picking the winner from `agg/test/best.json` is test-set selection, which [dgt_porting_guide.md §2](dgt_porting_guide.md) explicitly prohibits.
+5. **Fill in the HPO sweeps table** in [trained_models.md](trained_models.md#hpo-sweeps-for-models-without-molecular-descriptor) — one row per variant, read from `agg/test/best.json`. Treat this as a **record** of each variant's held-out performance, *not* as the basis for the decision in step 4. **Do not run `scripts/analyze_run.py` here** — plots and the optimal-F1 threshold are only needed for the winner, in Step 7.
+
+#### Selecting the winner on validation
+
+[scripts/rank_configs_by_val.py](../scripts/rank_configs_by_val.py) re-derives the ranking from each run's `<seed>/val/stats.json` — artefacts every `train.mode: dgt` run already writes, so no retraining is needed.
+
+```bash
+# 1. decide with test suppressed, and RECORD the verdict
+python scripts/rank_configs_by_val.py \
+  results/DGT/<ConfigA> results/DGT/<ConfigB> ... \
+  --metric f1 --hide-test
+
+# 2. only afterwards, compare the two bases
+python scripts/rank_configs_by_val.py results/DGT/<ConfigA> results/DGT/<ConfigB> ...
+```
+
+- **Pass run dirs explicitly.** The script refuses to rank across configs with different `dataset.name`, so a bare `results/DGT/` scan fails once that directory holds more than one dataset.
+- **`--metric f1`** matches the porting guide's primary selection metric; omit it to rank on each config's `metric_best` (AUC). When F1 differences fall inside the seed std, break the tie on AUC — and record that you did so *before* reading test.
+- The score is each seed's metric at its best-validation epoch, averaged across seeds. It is a **selection** score, not a generalisation estimate: it is maximised over epochs, so it is optimistic — equally so for every config, which is what makes the comparison fair.
+- Caveat: under `--metric f1` the ranking is on F1, but each run's saved **checkpoint** is still the best-`metric_best` (AUC) one. For F1-selected weights, set `metric_best: f1` in the configs and re-run.
 
 #### How to fill each column (HPO sweep table)
 
@@ -445,7 +464,7 @@ python scripts/retrain_on_trainval.py results/DGT/<winning_config>/ --include-te
 
 This writes the three-file deployment bundle (`final_model{,_with_test}.{ckpt,config.yaml,json}`) to the run root — see [Step 5 → Outputs](#what-the-script-does-either-mode) for the layout.
 
-#### 3. Record the final model in [trained_models.md → Final models](trained_models.md#final-models)
+#### 3. Record the final model in [trained_models.md → Final models](trained_models.md#final-model-without-molecular-descriptor)
 
 Add one row to the Final models table with these values:
 
