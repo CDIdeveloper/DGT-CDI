@@ -49,6 +49,12 @@ CLI
     [--json  <path>]      machine-readable dump
     [--markdown <path>]   write the table to a file (else stdout)
 
+All configs ranked together must share one `dataset.name` — scores from
+different datasets are not comparable, so mixing them raises rather than
+printing a misleading table. Scan mode over a results root will therefore
+refuse if that root holds runs from more than one dataset; pass the run dirs
+for a single dataset explicitly instead.
+
 Reads only. Writes nothing unless --json / --markdown is given.
 """
 import argparse
@@ -204,6 +210,7 @@ def _collect(config_dir, metric_override):
     val_mean, val_std = _mean_std(val_scores)
     row = {
         'config': config_dir.name,
+        'dataset': cfg.get('dataset', {}).get('name', '<unknown>'),
         'metric': metric,
         'metric_agg': agg,
         'n_seeds': len(seeds),
@@ -233,7 +240,7 @@ def _ranked(rows, key, higher_is_better):
     return sorted(have, key=lambda r: r[key], reverse=higher_is_better)
 
 
-def _render(rows, metric, higher_is_better, show_test):
+def _render(rows, metric, dataset, higher_is_better, show_test):
     """Render the ranking as a markdown table plus a verdict."""
     by_val = _ranked(rows, 'val_mean', higher_is_better)
     by_test = _ranked(rows, 'test_mean', higher_is_better)
@@ -246,6 +253,9 @@ def _render(rows, metric, higher_is_better, show_test):
 
     lines = [
         f"# Configuration ranking by VALIDATION {m}",
+        "",
+        f"Dataset: `{dataset}` (all configs below share it — the ranking "
+        f"refuses to run otherwise).",
         "",
         f"Selection basis: val {m} at each seed's best-val epoch, averaged over "
         f"seeds (population std, matching `agg_runs`).",
@@ -388,6 +398,24 @@ def main():
     if not rows:
         raise RuntimeError("No configs could be ranked; see warnings above.")
 
+    # Configs are only comparable if they were scored on the same data with the
+    # same metric. Ranking across datasets is meaningless (different test sets,
+    # different difficulty), so refuse rather than print a misleading table.
+    datasets = {r['dataset'] for r in rows}
+    if len(datasets) > 1:
+        listing = "\n".join(
+            f"    {r['config']}  ->  dataset.name: {r['dataset']}"
+            for r in sorted(rows, key=lambda r: (r['dataset'], r['config']))
+        )
+        raise ValueError(
+            f"Refusing to rank across {len(datasets)} different datasets "
+            f"({sorted(datasets)}) — the scores are not comparable.\n"
+            f"{listing}\n"
+            f"Pass only the run dirs for one dataset explicitly, e.g.\n"
+            f"    python scripts/rank_configs_by_val.py "
+            f"results/DGT/<ConfigA> results/DGT/<ConfigB>"
+        )
+
     metrics = {r['metric'] for r in rows}
     if len(metrics) > 1:
         raise ValueError(
@@ -397,7 +425,9 @@ def main():
     metric = rows[0]['metric']
     higher_is_better = _AGG[rows[0]['metric_agg']][0]
 
-    table = _render(rows, metric, higher_is_better, show_test=not args.hide_test)
+    dataset = rows[0]['dataset']
+    table = _render(rows, metric, dataset, higher_is_better,
+                    show_test=not args.hide_test)
 
     if args.md_out:
         args.md_out.parent.mkdir(parents=True, exist_ok=True)
@@ -409,7 +439,8 @@ def main():
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         with open(args.json_out, 'w') as fh:
-            json.dump({'metric': metric,
+            json.dump({'dataset': dataset,
+                       'metric': metric,
                        'higher_is_better': higher_is_better,
                        'rows': rows}, fh, indent=2)
         print(f"Wrote {args.json_out}")

@@ -135,9 +135,20 @@ def dgt_train(loggers, loaders, model, optimizer, scheduler):
 
     # --- Final test on the best-val checkpoint ---
     logging.info("[dgt] Loading best-val checkpoint for final test...")
+    # NB: graphgym's load_ckpt returns the epoch to RESUME FROM (i.e.
+    # ckpt_epoch + 1), or 0 when no checkpoint file was found. Subtract one to
+    # report the checkpoint's own epoch, which is what `best_epoch` means
+    # everywhere else in this function.
     loaded_epoch = load_ckpt(model, optimizer, scheduler)
-    logging.info(f"[dgt] Loaded checkpoint from epoch {loaded_epoch} "
-                 f"(best by val_{m}).")
+    if loaded_epoch == 0:
+        logging.warning(
+            "[dgt] No checkpoint was loaded — the final test below runs on the "
+            "LAST-epoch weights, NOT the best-val ones. Check that "
+            f"{Path(cfg.run_dir) / 'ckpt'} is non-empty."
+        )
+    else:
+        logging.info(f"[dgt] Loaded checkpoint from epoch {loaded_epoch - 1} "
+                     f"(best by val_{m}).")
 
     y_true, y_pred = _eval_and_collect(test_logger, test_loader, model,
                                        split='test')
