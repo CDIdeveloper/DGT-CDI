@@ -187,20 +187,23 @@ threshold 0.5, mean ± population std:
 which it never saw (`dgt_retrain` uses train+val only). A point estimate for this specific
 checkpoint, with no dispersion; it is **not** the generalisation estimate:
 
-| ROC-AUC | AUPRC | F1 @ 0.5013 | Accuracy | Precision | Recall |
-|---|---|---|---|---|---|
-| 0.9189 | 0.9295 | 0.8746 | 0.8669 | 0.8543 | 0.8958 |
+| Bundle | Budget | ROC-AUC | AUPRC | F1 @ 0.5 | Precision | Recall |
+|---|---|---|---|---|---|---|
+| `biodeg-no-ind-dgt-nongwu-2026-09-03` (`rdkit_fg`) | 29 ep | 0.9198 | 0.9333 | 0.8649 | 0.8421 | 0.8889 |
+| `biodeg-no-ind-dgt-graphonly-2026-09-03` (`none`) | 33 ep | 0.8975 | 0.9085 | 0.8276 | 0.8219 | 0.8333 |
 
-Confusion matrix at 0.5013 — TN 112, FP 22, FN 15, TP 129.
+Both budgets come from the CV median best epoch + 1, not from a single seed's validation curve.
 
-**Decision threshold: use 0.5.** The F1-optimal threshold measured on the deployed model is
-**0.5013**, i.e. 0.5 to within the gap between two adjacent predicted scores. The retrained
-model is well calibrated and needs no threshold tuning.
+**Decision threshold: both ship 0.5.** F1-argmax thresholds across this study's checkpoints
+span 0.357–0.667 while ROC-AUC barely moves, because the F1 surface is flat: for the
+graph-only model every threshold in 0.1936–0.6854 gives F1 within 0.01 of the maximum. The
+argmax is a noise estimate at n = 278. Using 0.5 costs 0.0084 F1 (`rdkit_fg`) and 0.0051
+(`none`), and it is the basis all reported metrics use. Argmax values are retained in each
+manifest under `best_f1_threshold_argmax_on_test`; each bundle's `deploy_eval/` carries the PR
+curve and per-molecule scores so an operating point can be chosen from application error costs
+— for a screening assay, a target precision on the readily-biodegradable class, since a false
+positive wrongly clears a persistent compound. Full analysis:
+[projects/paper.md](projects/paper.md) §7.
 
-⚠️ The `best_f1_threshold` written into `final_model.json` by `retrain_on_trainval.py` was
-**0.375**, inherited from seed 2's *original* (train-only, 50-epoch) model via
-`analyze_run.py`. That model is not the shipped one and its calibration does not transfer.
-**Overwrite the manifest value with 0.5013 before uploading**, or `predict.py
---threshold optimal-f1` will operate well below the optimum — which, for this endpoint,
-biases toward the more dangerous error (see the note on cost asymmetry in
-[projects/paper.md](projects/paper.md) §9).
+Superseded but retained: `biodeg-no-ind-dgt-graphonly-2026-09-02` (29-epoch seed-derived
+budget). Bundles are never overwritten; a new checkpoint gets a new dated name.

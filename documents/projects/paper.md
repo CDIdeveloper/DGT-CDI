@@ -328,11 +328,29 @@ deviations — and validation ROC-AUC by 0.0001 (0.8876 vs 0.8875), which is ind
 from zero. The full spread across all four arms is 0.0050 on F1 and 0.0047 on AUC, comparable
 in magnitude to the seed-to-seed variation within a single arm.
 
-**Quantum-mechanical descriptors do not contribute.** The `qm` arm (40 QM columns) ranks
-third on F1 and last on ROC-AUC, and adding QM columns on top of RDKit (`qm_rdkit` vs
-`rdkit_fg`) does not improve ROC-AUC (0.8853 vs 0.8876). This reproduces the qualitative
-finding of the earlier study on `biodeg_gwu` (§8), and is consistent with an endpoint driven
-by composition and functional-group content rather than electronic structure.
+**Quantum-mechanical descriptors carry less signal than RDKit descriptors, and add nothing on
+top of them.** This is the clearest effect in the study — the only comparison that reaches
+conventional significance. Paired across the five CV folds:
+
+| Comparison | ΔF1 | t (df=4) | Folds | ΔROC-AUC | t (df=4) |
+|---|---|---|---|---|---|
+| `qm` − `rdkit_fg` | **−0.0091** | **−7.36** | **0/5 favour `qm`** | −0.0042 | −2.13 |
+| `qm` − `none` | −0.0082 | −2.25 | 1/5 | −0.0007 | −0.45 |
+| `qm_rdkit` − `rdkit_fg` | −0.0001 | −0.09 | 2/5 | −0.0004 | −0.39 |
+
+Three things follow. **(i)** The 40 QM columns are a significantly weaker descriptor set than
+the 207 RDKit/functional-group columns: every fold, without exception, favours RDKit, at
+p ≈ 0.002. **(ii)** Adding QM on top of RDKit is *exactly* neutral — ΔF1 −0.0001, ΔROC-AUC
+−0.0004 — so the QM block contributes no information the model can use beyond what RDKit
+already supplies. **(iii)** QM alone is, if anything, slightly worse than no descriptors at
+all, though that comparison does not reach significance.
+
+This reproduces the qualitative finding of the earlier test-selected study on `biodeg_gwu`
+(§8) — but now under cross-validation with a paired test, and it is the one descriptor
+conclusion this work can state with confidence. It is consistent with an endpoint governed by
+composition and functional-group content rather than by electronic structure, which is what a
+ready-biodegradability assay would be expected to probe: microbial degradation depends on the
+presence of hydrolysable and oxidisable moieties, not on frontier-orbital energetics.
 
 **Descriptors reduce ROC-AUC variance but not F1 variance.** The graph-only arm has the
 largest ROC-AUC standard deviation (0.0051); `rdkit_fg` is five times tighter (0.0010). The
@@ -357,6 +375,44 @@ arbitrary operating point. Notably, the F1-optimal threshold measured on an *ind
 training seed's* model was 0.375: threshold estimates do not transfer between checkpoints
 trained on different data, which is an argument for deriving any deployment threshold from
 the shipped artifact itself rather than from a training run.
+
+**The F1-optimal decision threshold is not identifiable at this test-set size.** Two
+checkpoints of the graph-only configuration — the same architecture, same seed, differing only
+in training budget (29 vs 33 epochs) — score ROC-AUC **0.897466** and **0.897492**, identical
+to within 3 × 10⁻⁵. Their F1-optimal thresholds are **0.5475** and **0.6668**, differing by
+0.12, and the F1 attained at each differs by 0.0006. Across all checkpoints measured in this
+work the thresholds span 0.357–0.667 while ranking quality barely moves.
+
+The cause is a flat objective. Sweeping the graph-only deployment model across the 278 test
+molecules, **every threshold from 0.1936 to 0.6854 yields F1 within 0.01 of the maximum** — a
+plateau spanning almost half the probability scale — and F1 within it is non-monotonic noise
+(0.8311, 0.8247, 0.8276, 0.8194, 0.8239, 0.8327 at thresholds 0.40 … 0.667). The argmax
+selects a point in that noise. **A threshold obtained by maximising F1 on a test set of this
+size is a noise estimate, not a calibration.**
+
+Precision and recall, in contrast, vary smoothly and substantially over the same range:
+
+| Threshold | F1 | Precision | Recall |
+|---|---|---|---|
+| 0.40 | 0.8311 | 0.8092 | 0.8542 |
+| **0.50** | **0.8276** | **0.8219** | **0.8333** |
+| 0.60 | 0.8239 | 0.8357 | 0.8125 |
+| 0.6668 (argmax) | 0.8327 | 0.8540 | 0.8125 |
+| 0.75 | 0.8118 | 0.8661 | 0.7639 |
+
+The descriptor model shows the same pathology over a narrower band (plateau 0.3305–0.5062,
+width 0.176, against 0.492 for graph-only). It also exposes why the argmax is unstable: its
+optimum sits *exactly* on one molecule's predicted score, 0.4481847584, and evaluating
+1.5 × 10⁻⁵ above that — at 0.4482 — drops F1 from 0.8733 to 0.8696. F1 as a function of
+threshold is a step function whose steps are individual molecules; at n = 278 each step is
+worth ~0.004 F1, and the maximum is whichever step noise happens to favour.
+
+So the operating point is genuinely controllable — F1 simply cannot identify it. Two practical
+consequences follow. Metrics are reported at a fixed **0.5** throughout this work, which costs
+0.005 F1 against the argmax and carries no selection noise. And a deployment operating point
+should be chosen from the application's error costs — for a screening assay, a target
+precision on the "readily biodegradable" class, since a false positive wrongly clears a
+persistent compound — never from F1 argmax.
 
 **The four configurations are not distinguishable, and cross-validation confirms it rather
 than resolving it.** Under 5-fold CV the F1 range across all four arms is 0.0091, smaller than
@@ -525,17 +581,18 @@ different operating point from their own error costs.
 
 S3 prefix: `s3://cdi-lab-workspaces/ts_project_1/models/biodegradation/GWU/`
 
-| | `biodeg-no-ind-dgt-nongwu-2026-09-02` | `biodeg-no-ind-dgt-graphonly-2026-09-02` |
+| | `biodeg-no-ind-dgt-nongwu-2026-09-03` | `biodeg-no-ind-dgt-graphonly-2026-09-03` |
 |---|---|---|
 | Feature set | `rdkit_fg` (207 descriptors) | `none` (graph only) |
 | Config | `BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml` | `BiodegNoInd-DGT-Pipeline.yaml` |
 | Basis for shipping | the **recorded selection** (§6) | **operability** — see below |
 | Inference input | SMILES **+ 207 descriptor columns** | **SMILES only** |
-| Seed / retrain budget | 2 / 29 epochs (CV median best epoch + 1) | 2 / 29 epochs |
+| Seed / retrain budget | 2 / 29 epochs (CV median 28 + 1) | 2 / 33 epochs (CV median 32 + 1) |
 | Deployed-model ROC-AUC | 0.9198 | 0.8975 |
-| Deployed-model AUPRC | 0.9333 | 0.9058 |
-| Deployed-model F1 | 0.8733 @ thr 0.4482 | 0.8322 @ thr 0.5475 |
-| Decision threshold | 0.4482 | 0.5475 |
+| Deployed-model AUPRC | 0.9333 | 0.9085 |
+| Deployed-model F1 @ 0.5 | 0.8649 | 0.8276 |
+| Precision / recall @ 0.5 | 0.8421 / 0.8889 | 0.8219 / 0.8333 |
+| Decision threshold | **0.5** | **0.5** |
 
 Deployed-model figures are **single-checkpoint point estimates** on the 278 test molecules,
 which `dgt_retrain` held out. They are not the generalisation estimate — that is §5.3's
@@ -547,15 +604,20 @@ columns in the exact training order. Given that §6.1 finds the two indistinguis
 validation, that is a large operational simplification for no established loss of quality.
 This is an engineering decision, **not** a claim that the graph-only model is better.
 
-**Thresholds are measured on each deployed checkpoint, never inherited.** The same
-`rdkit_fg` configuration produced three different F1-optimal thresholds across checkpoints —
-**0.375** (a training seed's model), **0.5013** (retrained, 22-epoch budget) and **0.4482**
-(retrained, 29-epoch CV budget) — a spread of 0.13 with essentially unchanged ROC-AUC. A
-threshold is a property of a specific checkpoint's calibration, not of a configuration.
-`retrain_on_trainval.py` therefore writes `best_f1_threshold: null` and keeps the training
-seed's value only under `best_f1_threshold_from_training_seed`; `predict.py --threshold
-optimal-f1` fails with instructions rather than silently deploying a value that belongs to a
-different model.
+**Both bundles ship the fixed 0.5 threshold, deliberately.** F1-argmax thresholds measured
+across the checkpoints of this study span 0.357–0.667 while ROC-AUC barely moves, and the
+plateau analysis in §7 shows they are not identifiable at n = 278. Using 0.5 costs 0.0084 F1
+for `rdkit_fg` and 0.0051 for `none`, both inside the plateau, and carries no selection noise.
+The argmax values are retained in each manifest under `best_f1_threshold_argmax_on_test` for
+the record, and each bundle's `deploy_eval/` holds the PR curve and per-molecule scores so a
+deployer can select an operating point from their own error costs.
+
+Two supporting changes were made so this cannot regress: `retrain_on_trainval.py` writes
+`best_f1_threshold: null` rather than inheriting a training seed's value (which does not
+transfer — the same configuration gave 0.375 from a seed and 0.5013 from its retrain), keeping
+the seed value only under `best_f1_threshold_from_training_seed`; and `predict.py --threshold
+optimal-f1` fails with instructions on a null value rather than silently deploying a foreign
+one.
 
 **These artifacts are provisional.** If the cross-validation protocol (§9 item 1, §11) yields
 a better-supported configuration, new bundles will be uploaded under a new dated model name;
