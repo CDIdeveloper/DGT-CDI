@@ -90,6 +90,21 @@ Validation, 4 seeds, mean ± population std. F1 primary, ROC-AUC tiebreak.
 **Selection (recorded 2026-09-02, before any test number was read):** F1 top-two differ by
 0.0001, inside both seed stds → tie → broken on ROC-AUC → **`rdkit_fg`**.
 
+**Confirmed by 5-fold CV (2026-09-02).** The single-split ranking proved unstable — re-training
+one seed of the graph-only arm moved it to first on AUC ([projects/paper.md](projects/paper.md)
+§6.1). The selection was therefore re-derived under the porting-guide §2 protocol: stratified
+5-fold on train, `random_state=1`, 1053 validation molecules per fold instead of 526.
+
+| Rank | Feature set | CV F1 | CV ROC-AUC | Median best epoch |
+|---|---|---|---|---|
+| 1 | `rdkit_fg` (207) ← **selected** | 0.8143 ± 0.0100 | **0.8928 ± 0.0065** | 28 |
+| 2 | `qm_rdkit` (247) | 0.8142 ± 0.0129 | 0.8925 ± 0.0064 | 27 |
+| 3 | `none` (graph only) | 0.8134 ± 0.0060 | 0.8893 ± 0.0051 | 32 |
+| 4 | `qm` (40) | 0.8052 ± 0.0083 | 0.8887 ± 0.0052 | 30 |
+
+All four tie on F1 → tiebreak on ROC-AUC → **`rdkit_fg`**, the same configuration the
+single-split selection recorded. Artifacts: `results/DGT_cv/dgt_cv_results.{json,md}`.
+
 **Test — selected config only, read once (2026-09-02), 4 seeds, threshold 0.5:**
 
 | Accuracy | Precision | Recall | F1 | ROC-AUC |

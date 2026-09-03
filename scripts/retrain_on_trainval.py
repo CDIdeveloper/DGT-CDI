@@ -206,6 +206,14 @@ def main():
              "test split afterwards would be leakage.",
     )
     parser.add_argument(
+        "--epochs", type=int, default=None,
+        help="Override the retrain budget. Default: the chosen seed's "
+             "best-validation epoch + 1. Pass the CV median best epoch + 1 "
+             "when the configuration was selected by cross-validation — that "
+             "budget is averaged over folds rather than taken from one seed's "
+             "validation curve.",
+    )
+    parser.add_argument(
         "--orig-config", type=Path, default=None,
         help="Explicit path to the original (pristine) YAML used for this "
              "run. Defaults to auto-discovery: configs/**/<run_dir_name>.yaml. "
@@ -243,11 +251,20 @@ def main():
     print(f"Chosen seed: {chosen} (val {metric_best}={chosen_metric:.4f}, "
           f"closest to median). Test set was not read.")
 
-    # 2. That seed's best-validation epoch sets the retrain budget.
+    # 2. That seed's best-validation epoch sets the retrain budget, unless
+    #    overridden (e.g. with a CV-derived budget).
     best_epoch = per_seed_epoch[chosen]
-    retrain_epochs = best_epoch + 1
-    print(f"Median seed's best-val epoch={best_epoch}; will retrain for "
-          f"{retrain_epochs} epochs on train+val combined.")
+    if args.epochs is not None:
+        if args.epochs < 1:
+            raise ValueError(f"--epochs must be >= 1, got {args.epochs}.")
+        retrain_epochs = args.epochs
+        print(f"Median seed's best-val epoch={best_epoch}; overridden by "
+              f"--epochs: retraining for {retrain_epochs} epochs on train+val "
+              f"combined.")
+    else:
+        retrain_epochs = best_epoch + 1
+        print(f"Median seed's best-val epoch={best_epoch}; will retrain for "
+              f"{retrain_epochs} epochs on train+val combined.")
 
     # 3. Subprocess main.py with overrides.
     train_mode = "dgt_retrain_with_test" if args.include_test else "dgt_retrain"
@@ -329,6 +346,7 @@ def main():
         'chosen_seed': int(chosen),
         'chosen_seed_val_metric': chosen_metric,
         'best_epoch_on_original_val_split': best_epoch,
+        'retrain_epochs_overridden': args.epochs is not None,
         'best_f1_threshold': best_f1_threshold,
         'retrain_epochs': retrain_epochs,
         'train_mode': train_mode,

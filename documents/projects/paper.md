@@ -199,6 +199,33 @@ contributes the metric at its own best-validation epoch.
 † Seed 0's re-run value is derived from the refreshed 4-seed mean rather than read directly;
 seeds 1–3 are unchanged. Pre-re-run seed 0 was F1 0.8053 / ROC-AUC 0.8812.
 
+### 5.2b Cross-validation — stratified 5-fold on train
+
+The single-split figures above could not order the four arms (§6.1), so the selection was
+re-derived under the protocol [porting guide §2](../dgt_porting_guide.md) specifies: stratified
+5-fold on the **train** split (`random_state=1`), a fresh model per fold, the held-out fold as
+validation, the fixed 278-row test split untouched by every fold. Each fold evaluates on
+**1053 molecules against the single split's 526**, and every training molecule is held out
+exactly once (fold sizes 1053×4 + 1052 = 5264; fold positives summing to 2466).
+
+| Rank | Feature set | CV F1 (mean ± std) | CV ROC-AUC (mean ± std) | Median best epoch |
+|---|---|---|---|---|
+| 1 | `rdkit_fg` (non-GWU, 207) ← **selected** | 0.8143 ± 0.0100 | **0.8928 ± 0.0065** | 28 |
+| 2 | `qm_rdkit` (all, 247) | 0.8142 ± 0.0129 | 0.8925 ± 0.0064 | 27 |
+| 3 | `none` (graph only) | 0.8134 ± 0.0060 | 0.8893 ± 0.0051 | 32 |
+| 4 | `qm` (GWU only, 40) | 0.8052 ± 0.0083 | 0.8887 ± 0.0052 | 30 |
+
+Per-fold values are in `results/DGT_cv/dgt_cv_results.{json,md}`.
+
+**Dispersion is larger under CV than across seeds** — fold std 0.0060–0.0129 on F1 against
+0.0037–0.0065 for the 4-seed single-split runs. That is expected and is the point: fold
+variation measures sensitivity to the *data split*, which exceeds optimisation noise. It is
+the honest dispersion for this quantity.
+
+**The four arms remain statistically indistinguishable.** The F1 range across all four is
+0.0091 — smaller than the fold std of two of them. The top three lie within 0.0009 of each
+other.
+
 ### 5.3 Test — selected configuration only
 
 `rdkit_fg` (non-GWU, 207 descriptors), read **once** after the selection in §6 was recorded.
@@ -272,8 +299,24 @@ direction.
 
 The substantive conclusion is §7's: **at four seeds on a single validation split, these four
 configurations cannot be ordered.** The recorded selection is a protocol-compliant tiebreak
-among indistinguishable candidates, not evidence that the descriptor channel helps. Resolving
-the ordering requires the cross-validation protocol in §9 item 1.
+among indistinguishable candidates, not evidence that the descriptor channel helps.
+
+### 6.2 Cross-validation confirms the recorded selection
+
+The instability above was the motivation for running the §2 cross-validation protocol
+(§5.2b). Under 5-fold CV, applying the identical rule:
+
+1. **All four arms tie on F1** (range 0.0091, inside two arms' fold std).
+2. **Tiebreak on ROC-AUC → `rdkit_fg`** (0.8928), ahead of `qm_rdkit` (0.8925),
+   `none` (0.8893) and `qm` (0.8887).
+3. **Selected: `rdkit_fg`** — the same configuration recorded in §6.
+
+This is the outcome that matters for the reported result. The single-split selection was made
+under clean conditions but turned out to be unstable; the CV selection, made on ten times the
+validation data with dispersion measured across data splits rather than seeds, **independently
+reproduces it**. The graph-only arm that briefly took first place on the single-split re-run
+falls to third under CV. The recorded selection therefore stands on a sound basis, not merely
+on the technicality of having been written down first.
 
 ---
 
@@ -315,11 +358,22 @@ training seed's* model was 0.375: threshold estimates do not transfer between ch
 trained on different data, which is an argument for deriving any deployment threshold from
 the shipped artifact itself rather than from a training run.
 
-**The two metrics disagree on the winner, and both top-two gaps are 0.0001.** ROC-AUC favours
-`rdkit_fg`, F1 favours `qm_rdkit`. With four seeds and differences three orders of magnitude
-below the metric values, the honest reading is that **the four configurations are not
-distinguishable at this sample size**; the selection in §6 is a protocol-compliant
-tiebreak, not a demonstrated superiority.
+**The four configurations are not distinguishable, and cross-validation confirms it rather
+than resolving it.** Under 5-fold CV the F1 range across all four arms is 0.0091, smaller than
+the fold standard deviation of two of them, and the top three lie within 0.0009. Testing the
+descriptor channel directly — `rdkit_fg` minus `none`, paired fold by fold:
+
+| Metric | Per-fold difference | Mean | Folds favouring descriptors |
+|---|---|---|---|
+| F1 | −0.0040, −0.0110, +0.0176, +0.0014, +0.0006 | **+0.0009** | 3 / 5 |
+| ROC-AUC | +0.0039, −0.0015, +0.0050, +0.0080, +0.0021 | **+0.0035** | 4 / 5 |
+
+On F1 the descriptor channel does nothing (t = 0.20, df = 4). On ROC-AUC it is consistently
+but weakly positive (t = 2.22, df = 4; p ≈ 0.09) — suggestive, short of conventional
+significance at five folds, and not corrected for having compared four arms. The honest
+statement is that **any descriptor benefit on this endpoint is at most ~0.004 ROC-AUC and
+cannot be established at this sample size** — against the +0.0183 reported by the earlier
+test-selected study (§8).
 
 ---
 
@@ -350,13 +404,13 @@ literature.
 
 Stated explicitly so that reviewers and future work are not misled.
 
-1. **Single validation split, not cross-validation.** Selection used one fixed 90/10
-   train/validation carve-out, not the stratified 5-fold cross-validation on train that
-   [porting guide §2](../dgt_porting_guide.md) specifies. Consequences: (a) selection is
-   noisier than the protocol intends; (b) the folds are not matched to the baselines', so the
-   "same CV basis" requirement of §8 is not yet satisfiable and **no cross-model CV
-   comparison is claimed here**. Implementing the §5 CV harness is the highest-value next
-   step.
+1. ~~Single validation split, not cross-validation.~~ **Resolved 2026-09-02.** The §2
+   protocol is implemented (`split_mode: cv-train-<k>` plus `scripts/cv/`) and the selection
+   re-derived under stratified 5-fold CV on train with `random_state=1` (§5.2b, §6.2). Folds
+   are built to the guide's specification, so a CV-matched cross-model comparison is now
+   possible from this side. **Residual caveat:** the CV runs use one training seed per fold,
+   so fold dispersion mixes data-split variation with optimisation noise; separating them
+   would need seeds within folds.
 2. **The test set has been scored 16 times** (4 configurations × 4 seeds) as an automatic
    part of each run, though never read during selection. Only the selected configuration's
    test metric should be reported as a headline; the others are ablation context.
@@ -507,10 +561,13 @@ the prefixes above are not overwritten.
 
 - [x] Read the test set **once** for the selected configuration (§5.3, 2026-09-02).
 - [x] **AUPRC** — 0.9269 ± 0.0051 (§5.3, 2026-09-02).
-- [ ] Implement the 5-fold CV harness (porting guide §5) so a matched cross-model CV
-      comparison becomes possible; re-run selection under it.
-- [ ] Increase seed count, or report CV mean ± std over folds, to resolve whether the
-      descriptor channel has any real effect.
-- [ ] Retrain the selected configuration on train+val and deposit the deployment bundle.
+- [x] **5-fold CV harness** (porting guide §5) implemented and run; selection re-derived and
+      confirmed (§5.2b, §6.2, 2026-09-02).
+- [ ] The descriptor effect remains unresolved: ROC-AUC +0.0035 paired across folds
+      (p ≈ 0.09, 4/5 folds). Either accept "no established benefit" as the finding, or add
+      seeds within folds / more folds to settle it.
+- [x] Retrain the selected configuration on train+val and deposit the deployment bundle
+      (§10.1). Optional refinement: the bundle's 22-epoch budget came from one seed's val
+      curve; CV puts the median best epoch at 28.
 - [ ] Decide whether the "test-selected ablation gains do not replicate" finding (§8) is
       framed as a headline contribution or a methods note.

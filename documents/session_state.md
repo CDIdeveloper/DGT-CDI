@@ -22,7 +22,16 @@ per-seed values, leakage audit, limitations).
 - **Headline finding:** the descriptor channel is ~neutral here (best F1 +0.0050 over
   graph-only, ROC-AUC +0.0001) — the earlier +0.0183 in [projects/gwu.md](projects/gwu.md)
   does **not** replicate once selection moves off the test set.
-- **Test set: not yet read** for the selected config. That is the immediate next action.
+- **Confirmed by 5-fold CV (2026-09-02).** The §2 protocol is now implemented
+  (`split_mode: cv-train-<k>` + `scripts/cv/`) and run: all four arms tie on F1, AUC tiebreak
+  selects `rdkit_fg` — the same config the single-split selection recorded. Artifacts in
+  `results/DGT_cv/`. Paired fold-by-fold, descriptors give F1 +0.0009 (3/5 folds) and
+  ROC-AUC +0.0035 (4/5 folds, p ≈ 0.09) over graph-only: **no established benefit.**
+- **Test read once** for the selected config: F1 0.8610 ± 0.0066, ROC-AUC 0.9196 ± 0.0027,
+  AUPRC 0.9269 ± 0.0051.
+- **Two deployment bundles built** (`rdkit_fg` and graph-only) — see
+  [projects/paper.md](projects/paper.md) §10.1. Graph-only ships alongside because it needs
+  only SMILES at inference; on this dataset the two are indistinguishable.
 
 **Built this session:** `biodeg_gwu_no_ind` loader + format registration + 4 configs;
 [scripts/rank_configs_by_val.py](../scripts/rank_configs_by_val.py) (validation-based config
@@ -31,12 +40,22 @@ provenance + merge checklist); modeling_routine Step 0 (dataset onboarding) and 
 Step 6 (select on validation, not test); dataset/test-selection warnings on
 [trained_models.md](trained_models.md) and [projects/gwu.md](projects/gwu.md).
 
+**Built this session (continued):** `split_mode: cv-train-<k>` (folds train+val only, test
+untouched) and `scripts/cv/` (`dgt_cv_config.py`, `dgt_common.py`, `run_cv.py` — resumable
+5-fold sweep, §2 selection rule, JSON+MD report); median-**val** seed choice in
+`retrain_on_trainval.py`; validation-fitted decision thresholds
+(`dgt_train.py` dumps `val/predictions.pt`, `analyze_run.py` consumes it); project gotchas in
+[../CLAUDE.md](../CLAUDE.md).
+
 **Next actions, in order:**
-1. Step 7 for the selected config — `analyze_run.py` per seed, then `retrain_on_trainval.py`;
-   read `agg/test/best.json` **once** and record it in paper.md §11 and trained_models.md.
-2. Upload the deployment bundle to S3, fill the Final-models row.
-3. Open items ranked in paper.md §9 — the 5-fold CV harness (porting guide §5) is the
-   highest-value one; it is what makes a matched cross-model comparison possible.
+1. Copy both bundles to `results/final_models/` and upload to S3 (paper.md §10.1 has the
+   URIs). Verify each manifest's `best_f1_threshold` is the value measured on that deployed
+   checkpoint, not one inherited from a training seed.
+2. Optional: rebuild the `rdkit_fg` bundle at the CV-derived 29-epoch budget
+   (`retrain_on_trainval.py --epochs 29`) instead of the 22 taken from one seed's val curve.
+3. Open items in paper.md §11 — AUPRC done, CV done; what remains is the descriptor-effect
+   question (ROC-AUC +0.0035, p ≈ 0.09), whether to add seeds within folds, and the §8
+   framing decision.
 
 **Note:** everything below this section predates the `biodeg_gwu_no_ind` work and refers to
 the older `biodeg_gwu` dataset (300-row test, test-selected). Kept for history.
