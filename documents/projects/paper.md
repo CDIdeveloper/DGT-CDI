@@ -631,10 +631,53 @@ the prefixes above are not overwritten.
 - [x] **AUPRC** — 0.9269 ± 0.0051 (§5.3, 2026-09-02).
 - [x] **5-fold CV harness** (porting guide §5) implemented and run; selection re-derived and
       confirmed (§5.2b, §6.2, 2026-09-02).
-- [ ] The descriptor effect remains unresolved: ROC-AUC +0.0035 paired across folds
-      (p ≈ 0.09, 4/5 folds). Either accept "no established benefit" as the finding, or add
-      seeds within folds / more folds to settle it.
 - [x] Retrain the selected configuration on train+val and deposit the deployment bundle
       (§10.1), rebuilt on the CV-derived 29-epoch budget.
-- [ ] Decide whether the "test-selected ablation gains do not replicate" finding (§8) is
-      framed as a headline contribution or a methods note.
+- [ ] **Decide the framing** — whether the "test-selected ablation gains do not replicate"
+      finding (§8) is a headline contribution or a methods note. Options drafted side by side
+      in [paper_framing_options.md](paper_framing_options.md). This is the only open item that
+      changes the shape of the paper; everything else below is optional.
+
+---
+
+## 12. Future work
+
+None of these blocks submission. Each would refine a number that already sits inside its own
+uncertainty, or extend the study beyond its current scope.
+
+1. **Settle the descriptor effect.** Paired across folds, `rdkit_fg` − `none` is ROC-AUC
+   +0.0035 (t = 2.22, df = 4, p ≈ 0.09, 4/5 folds) and F1 +0.0009 (n.s.). Adding seeds within
+   folds, or more folds, would separate optimisation noise from data-split variation and could
+   settle whether the effect is real. Cost ≈ 4 h GPU per additional seed across the ablation.
+   The current honest statement — "no established benefit, at most ~0.004 ROC-AUC" — is
+   publishable as it stands.
+
+2. **F1-selected checkpoints end to end.** All configs use `metric_best: auc`, so within-run
+   checkpointing is by ROC-AUC while the *selection* metric is F1 (porting guide §2). Setting
+   `metric_best: f1` and re-running CV would make the two consistent. Expected to change
+   little — the CV best-F1 and best-AUC epochs differ by only a few — but it removes a
+   mismatch a reviewer could reasonably query. Cost ≈ 4.3 h GPU.
+
+3. **Refit descriptor standardisation per CV fold** (§9 item 6). Currently the z-score
+   statistics are computed once, in the loader, from the fixed 90 % train carve-out, so each
+   fold's validation rows contributed to the constants applied to them. Test is unaffected and
+   the effect very slightly favours the descriptor arms, so a null descriptor result is
+   understated rather than inflated. A proper fix needs either a per-fold processed cache
+   (5× featurisation) or moving standardisation into a post-split transform.
+
+4. **Re-enable the split-overlap assertion** in `graphgps/loader/split_generator.py`
+   (currently commented out). It would catch index-level overlap between splits — a cheap
+   regression guard, though it cannot detect the same *molecule* appearing in two splits,
+   which is the failure that actually matters. A canonical-SMILES disjointness check in the
+   loader would be the stronger version.
+
+5. **`perf_val` mixes train statistics before the first eval epoch**
+   (`graphgps/train/dgt_train.py`). Unreachable at `eval_period: 1`, which every config uses;
+   at `eval_period > 1` it could make `best_epoch` point at a train-derived value and, in a
+   bad case, skip saving a checkpoint entirely.
+
+6. **Extend the methodological analysis to further endpoints.** The non-replication,
+   QM-null and threshold-identifiability results all rest on one dataset. Replicating them on
+   `biodeg` (no-Reaxys) and `biodeg_gwu` would materially strengthen the methods claim — and
+   is a prerequisite if §8 is framed as the headline contribution (see
+   [paper_framing_options.md](paper_framing_options.md)).

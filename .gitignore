@@ -1,5 +1,10 @@
-# DGT training output
-results/
+# DGT training output (keep the deployed-model index tracked)
+# NB: git will not descend into an ignored *directory*, so the parents must be
+# un-ignored step by step before the negation for INDEX.md can take effect.
+results/*
+!results/final_models/
+results/final_models/*
+!results/final_models/INDEX.md
 
 # Auto-downloaded / cached datasets (keep curated split files tracked)
 datasets/*
