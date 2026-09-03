@@ -531,11 +531,11 @@ S3 prefix: `s3://cdi-lab-workspaces/ts_project_1/models/biodegradation/GWU/`
 | Config | `BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml` | `BiodegNoInd-DGT-Pipeline.yaml` |
 | Basis for shipping | the **recorded selection** (§6) | **operability** — see below |
 | Inference input | SMILES **+ 207 descriptor columns** | **SMILES only** |
-| Seed / retrain budget | 2 / 22 epochs | 2 / 29 epochs |
-| Deployed-model ROC-AUC | 0.9189 | 0.8975 |
-| Deployed-model AUPRC | 0.9295 | 0.9058 |
-| Deployed-model F1 | 0.8746 @ thr 0.5013 | 0.8322 @ thr 0.5475 |
-| Decision threshold | 0.5 (measured optimum 0.5013) | 0.5475 |
+| Seed / retrain budget | 2 / 29 epochs (CV median best epoch + 1) | 2 / 29 epochs |
+| Deployed-model ROC-AUC | 0.9198 | 0.8975 |
+| Deployed-model AUPRC | 0.9333 | 0.9058 |
+| Deployed-model F1 | 0.8733 @ thr 0.4482 | 0.8322 @ thr 0.5475 |
+| Decision threshold | 0.4482 | 0.5475 |
 
 Deployed-model figures are **single-checkpoint point estimates** on the 278 test molecules,
 which `dgt_retrain` held out. They are not the generalisation estimate — that is §5.3's
@@ -547,9 +547,15 @@ columns in the exact training order. Given that §6.1 finds the two indistinguis
 validation, that is a large operational simplification for no established loss of quality.
 This is an engineering decision, **not** a claim that the graph-only model is better.
 
-Thresholds were measured on each deployed checkpoint rather than inherited from a training
-seed — the two differ (0.5013 vs 0.5475), and neither matches the 0.375 that a training
-seed's model produced (§7).
+**Thresholds are measured on each deployed checkpoint, never inherited.** The same
+`rdkit_fg` configuration produced three different F1-optimal thresholds across checkpoints —
+**0.375** (a training seed's model), **0.5013** (retrained, 22-epoch budget) and **0.4482**
+(retrained, 29-epoch CV budget) — a spread of 0.13 with essentially unchanged ROC-AUC. A
+threshold is a property of a specific checkpoint's calibration, not of a configuration.
+`retrain_on_trainval.py` therefore writes `best_f1_threshold: null` and keeps the training
+seed's value only under `best_f1_threshold_from_training_seed`; `predict.py --threshold
+optimal-f1` fails with instructions rather than silently deploying a value that belongs to a
+different model.
 
 **These artifacts are provisional.** If the cross-validation protocol (§9 item 1, §11) yields
 a better-supported configuration, new bundles will be uploaded under a new dated model name;
@@ -567,7 +573,6 @@ the prefixes above are not overwritten.
       (p ≈ 0.09, 4/5 folds). Either accept "no established benefit" as the finding, or add
       seeds within folds / more folds to settle it.
 - [x] Retrain the selected configuration on train+val and deposit the deployment bundle
-      (§10.1). Optional refinement: the bundle's 22-epoch budget came from one seed's val
-      curve; CV puts the median best epoch at 28.
+      (§10.1), rebuilt on the CV-derived 29-epoch budget.
 - [ ] Decide whether the "test-selected ablation gains do not replicate" finding (§8) is
       framed as a headline contribution or a methods note.

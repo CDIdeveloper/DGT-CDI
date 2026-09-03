@@ -27,11 +27,15 @@ seed choice, epoch budget and training data are all validation-derived, so the
 deployment artifact carries no information from the held-out set. Use the
 original dgt-mode aggregated mean ± std as the reported generalisation estimate.
 
-ONE EXCEPTION: `best_f1_threshold`, copied into the manifest from the chosen
-seed's `plots/summary.json`, is swept over TEST predictions by
-`scripts/analyze_run.py`. Metrics at the default 0.5 threshold are unaffected;
-only `predict.py --threshold optimal-f1` consumes it. See
-documents/projects/paper.md §9 item 4.
+The manifest's `best_f1_threshold` is written as **null**. A threshold fitted
+on a training seed's model does not transfer to the retrained bundle — the same
+configuration produced 0.375, 0.4482 and 0.5013 across checkpoints — so shipping
+one would be worse than shipping none. The chosen seed's value is kept under
+`best_f1_threshold_from_training_seed` for reference. Measure the real one by
+scoring this bundle on a labelled held-out table (`predict.py --label-col`) and
+write it into the manifest. Metrics at the default 0.5 threshold are unaffected;
+only `predict.py --threshold optimal-f1` consumes the field. See
+documents/projects/paper.md §7 and §9 item 4.
 """
 import argparse
 import json
@@ -306,10 +310,12 @@ def main():
     dst_cfg = run_dir / f'final_model{suffix}.config.yaml'
     shutil.copy2(orig_cfg_path, dst_cfg)
 
-    # 4b. If the chosen seed already has plots/summary.json (i.e. the user ran
-    # analyze_run.py), pull `best_f1_threshold` so predict.py can use the
-    # 'optimal-f1' threshold without needing the seed's plots/ folder shipped
-    # alongside.
+    # 4b. Record the chosen TRAINING SEED's F1-optimal threshold for reference
+    # only. It is deliberately NOT written to `best_f1_threshold`: that seed's
+    # model is not the model in this bundle (different training data, different
+    # epoch budget), and thresholds do not transfer between checkpoints —
+    # measured spread on one config was 0.375 / 0.4482 / 0.5013. The deployment
+    # threshold must be measured on THIS checkpoint; see the note printed below.
     chosen_summary = run_dir / chosen / 'plots' / 'summary.json'
     best_f1_threshold = None
     if chosen_summary.is_file():
@@ -347,7 +353,9 @@ def main():
         'chosen_seed_val_metric': chosen_metric,
         'best_epoch_on_original_val_split': best_epoch,
         'retrain_epochs_overridden': args.epochs is not None,
-        'best_f1_threshold': best_f1_threshold,
+        # Null on purpose — measure it on this checkpoint (see 4b).
+        'best_f1_threshold': None,
+        'best_f1_threshold_from_training_seed': best_f1_threshold,
         'retrain_epochs': retrain_epochs,
         'train_mode': train_mode,
         'included_test_in_training': bool(args.include_test),
@@ -372,6 +380,17 @@ def main():
     print(f"  Convenience copy:  {dst_ckpt}")
     print(f"  Bundled config:    {dst_cfg}")
     print(f"  Manifest:          {manifest_path}")
+    print()
+    print("NEXT: measure the decision threshold on THIS checkpoint — the "
+          "manifest ships with best_f1_threshold=null on purpose.")
+    print(f"  python scripts/predict.py --ckpt {dst_ckpt} \\")
+    print(f"    --smiles-csv <labelled held-out table> --label-col <target> \\")
+    print(f"    --output-csv /tmp/deploy_scores.csv")
+    print("Then write the measured value into the manifest's "
+          "'best_f1_threshold' with a provenance note.")
+    if best_f1_threshold is not None:
+        print(f"(For reference only, the chosen training seed's value was "
+              f"{best_f1_threshold} — do NOT ship it.)")
 
 
 if __name__ == '__main__':

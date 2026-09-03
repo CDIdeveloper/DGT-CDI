@@ -259,10 +259,29 @@ def _resolve_threshold(ckpt_path: Path, threshold_arg: str) -> float:
         if 'best_f1_threshold' not in data:
             raise KeyError(
                 f"'best_f1_threshold' missing from {manifest}. Re-run "
-                f"scripts/retrain_on_trainval.py (it now records this) or "
-                f"pass a numeric --threshold."
+                f"scripts/retrain_on_trainval.py or pass a numeric "
+                f"--threshold."
             )
-        return float(data['best_f1_threshold'])
+        value = data['best_f1_threshold']
+        if value is None:
+            # retrain_on_trainval.py writes null deliberately: a threshold
+            # fitted on a training seed's model does not transfer to the
+            # retrained bundle. Fail loudly rather than silently deploy one.
+            seed_value = data.get('best_f1_threshold_from_training_seed')
+            raise ValueError(
+                f"'best_f1_threshold' is null in {manifest} — it has not been "
+                f"measured on this checkpoint yet.\n"
+                f"Score this bundle on a labelled held-out table to get it:\n"
+                f"  python scripts/predict.py --ckpt {ckpt_path} \\\n"
+                f"    --smiles-csv <table> --label-col <target> "
+                f"--output-csv /tmp/scores.csv\n"
+                f"then write the reported best_f1_threshold into the manifest."
+                + (f"\n(The chosen training seed's value was {seed_value}; it "
+                   f"belongs to a different model and must not be used.)"
+                   if seed_value is not None else "")
+                + "\nOr pass a numeric --threshold (0.5 is the reported basis)."
+            )
+        return float(value)
     try:
         return float(threshold_arg)
     except ValueError:
