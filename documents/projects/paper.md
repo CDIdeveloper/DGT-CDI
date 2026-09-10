@@ -833,11 +833,19 @@ uncertainty, or extend the study beyond its current scope.
    at `eval_period > 1` it could make `best_epoch` point at a train-derived value and, in a
    bad case, skip saving a checkpoint entirely.
 
-6. **Extend the methodological analysis to further endpoints.** The non-replication,
-   QM-null and threshold-identifiability results all rest on one dataset. Replicating them on
-   `biodeg` (no-Reaxys) and `biodeg_gwu` would materially strengthen the methods claim — and
-   is a prerequisite if §8 is framed as the headline contribution (see
-   [paper_framing_options.md](paper_framing_options.md)).
+6. **Replicate on a genuinely independent endpoint.** The non-replication, QM-null and
+   threshold-identifiability results all rest on one dataset, so none of them is currently
+   supported as a general claim. Note what would *not* count: `biodeg` (no-Reaxys),
+   `biodeg_gwu` and `biodeg_gwu_no_ind` are different curations of the **same underlying
+   collection**, differing in which rows are retained — Reaxys entries, inherently-
+   biodegradable rows — not in provenance. Running the analysis across them measures
+   sensitivity to a curation choice, which is worth knowing but is not replication: the
+   molecules, the measurements and their biases are shared, so an artefact of the collection
+   would reproduce in all three and look like confirmation. A real test needs a different
+   endpoint, or ready-biodegradability data from an independent source. This is a principal
+   reason the §8 non-replication is framed as a **methods caution rather than a headline
+   contribution** (see [paper_framing_options.md](paper_framing_options.md)); promoting it
+   would require exactly the independent evidence this item describes.
 
 7. **Analyse the three exported arms per molecule.** The export itself is done (§10.2 now
    covers `rdkit_fg`, `qm_rdkit` and `none`, with folds verified identical across all three),
