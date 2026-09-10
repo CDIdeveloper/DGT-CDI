@@ -32,12 +32,21 @@ loaders do not shuffle, so dataset index == parquet row. That is *verified*,
 not assumed — every dump's label vector is checked elementwise against the
 parquet's, and the script aborts on any mismatch.
 
-Usage (lab box, repo root, `dgt` env):
-    python scripts/export_oof_test_predictions.py
+Any ablation arm can be exported. Exporting a non-selected arm is an
+**ablation-context harvest, not a re-selection**: the recorded selection stays
+`rdkit_fg` (§6, §6.2) and the headline test figures in §5.3 are unchanged.
+Because the fold assignment depends only on the train parquet — not on the arm —
+two arms' exports are paired molecule by molecule, which `2b` verifies.
 
-Writes results/predictions/dgt_oof_test_rdkit_fg.parquet (gitignored) and
-prints the sanity-check report.
+Usage (lab box, repo root, `dgt` env):
+    python scripts/export_oof_test_predictions.py                    # rdkit_fg
+    python scripts/export_oof_test_predictions.py --arm qm_rdkit     # matches MPNN
+    python scripts/export_oof_test_predictions.py --arm none         # graph only
+
+Writes results/predictions/dgt_oof_test_<arm>.parquet (gitignored) and prints
+the sanity-check report.
 """
+import argparse
 import json
 from pathlib import Path
 
@@ -48,12 +57,11 @@ from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONFIG = 'BiodegNoInd-DGT-Pipeline-WithDesc-nongwu'
 RAW_DIR = REPO_ROOT / 'datasets' / 'biodeg_gwu_no_ind' / 'raw'
 CV_JSON = REPO_ROOT / 'results' / 'DGT_cv' / 'dgt_cv_results.json'
-CV_RUNS = REPO_ROOT / 'results' / 'DGT_cv' / CONFIG
-SEED_RUNS = REPO_ROOT / 'results' / 'DGT' / CONFIG
-OUT_PATH = REPO_ROOT / 'results' / 'predictions' / 'dgt_oof_test_rdkit_fg.parquet'
+CV_ROOT = REPO_ROOT / 'results' / 'DGT_cv'
+SEED_ROOT = REPO_ROOT / 'results' / 'DGT'
+PRED_DIR = REPO_ROOT / 'results' / 'predictions'
 S3_DEST = ('s3://cdi-lab-workspaces/ts_project_1/data/biodegradation/GWU/'
            'predictions/')
 
@@ -63,14 +71,38 @@ SEEDS = (0, 1, 2, 3)
 # without changing it there silently re-folds the data.
 CV_RANDOM_STATE = 1
 
-# Expected row counts and published values, asserted/compared below so a silent
-# regression in any upstream artifact shows up as a failed check.
+# Expected row counts, asserted below so a silent regression in any upstream
+# artifact shows up as a failed check. Identical for every arm — the arms differ
+# only in which descriptors reach the model, never in which molecules do.
 N_TRAIN, N_TEST = 5264, 278
 POS_TRAIN, POS_TEST = 2466, 144
-PAPER_CV_AUC = (0.8928, 0.0065)      # §5.2b
-PAPER_TEST_F1 = (0.8610, 0.0066)     # §5.3
-PAPER_TEST_AUC = (0.9196, 0.0027)    # §5.3
-PAPER_TEST_AP = (0.9269, 0.0051)     # §5.3
+
+# One entry per ablation arm. `cv_auc` is that arm's published §5.2b figure.
+# `test` is populated for the SELECTED arm only, because §5.3 reads the test
+# split for that configuration alone; exporting any other arm is an
+# ablation-context harvest and changes no selection (§6, §6.2, §10.2).
+ARMS = {
+    'rdkit_fg': {
+        'config': 'BiodegNoInd-DGT-Pipeline-WithDesc-nongwu',
+        'about': '207 RDKit/functional-group descriptors — the selected arm (§6)',
+        'cv_auc': (0.8928, 0.0065),
+        'test': {'f1@0.5': (0.8610, 0.0066),
+                 'roc_auc': (0.9196, 0.0027),
+                 'auprc': (0.9269, 0.0051)},
+    },
+    'qm_rdkit': {
+        'config': 'BiodegNoInd-DGT-Pipeline-WithDesc',
+        'about': '247 descriptors (40 QM + 207 RDKit/fg) — matches the MPNN baseline',
+        'cv_auc': (0.8925, 0.0064),
+        'test': None,
+    },
+    'none': {
+        'config': 'BiodegNoInd-DGT-Pipeline',
+        'about': 'graph only, no descriptor channel',
+        'cv_auc': (0.8893, 0.0051),
+        'test': None,
+    },
+}
 
 
 def _banner(title):
@@ -92,11 +124,11 @@ def _load_pred(path):
             blob['best_epoch'])
 
 
-def _fold_val_pred_path(fold, cells):
+def _fold_val_pred_path(fold, cells, config):
     """Where fold `fold` dumped its held-out block, per the CV runner's record."""
     if fold in cells and cells[fold].get('run_dir'):
         return Path(cells[fold]['run_dir']) / 'val' / 'predictions.pt'
-    return CV_RUNS / f'fold{fold}' / CONFIG / '0' / 'val' / 'predictions.pt'
+    return CV_ROOT / config / f'fold{fold}' / config / '0' / 'val' / 'predictions.pt'
 
 
 def _check_labels(label, got, expected):
@@ -133,22 +165,27 @@ def _report(label, got, paper):
           f'(delta {got - mean:+.4f})')
 
 
-def _cv_cells():
+def _source_paths(config):
+    """Every dump this export reads, as (label, path): 5 CV folds + 4 seeds."""
     with open(CV_JSON) as fh:
         blob = json.load(fh)
-    return {v['fold']: v for v in blob.get('cells', {}).values()
-            if v.get('config') == CONFIG}
+    cells = {v['fold']: v for v in blob.get('cells', {}).values()
+             if v.get('config') == config}
+    fold_paths = [(f'CV fold {f}', _fold_val_pred_path(f, cells, config))
+                  for f in range(K_FOLDS)]
+    seed_paths = [(f'test seed {s}',
+                   SEED_ROOT / config / str(s) / 'test' / 'predictions.pt')
+                  for s in SEEDS]
+    return fold_paths, seed_paths
 
 
-def oof_train_probs(y_train, folds):
+def oof_train_probs(y_train, fold_index, fold_paths):
     """Scatter each fold's held-out probabilities into one OOF vector."""
-    cells = _cv_cells()
     oof = np.full(len(y_train), np.nan)
-    for fold in range(K_FOLDS):
-        path = _fold_val_pred_path(fold, cells)
+    for fold, (label, path) in enumerate(fold_paths):
         y_true, y_pred, best_epoch = _load_pred(path)
-        _check_labels(f'CV fold {fold}', y_true, y_train[folds[fold]])
-        oof[folds[fold]] = y_pred
+        _check_labels(label, y_true, y_train[fold_index[fold]])
+        oof[fold_index[fold]] = y_pred
         print(f'  fold {fold}: {len(y_pred):>4} held-out molecules, '
               f'best-val checkpoint epoch {best_epoch}')
     if np.isnan(oof).any():
@@ -157,13 +194,12 @@ def oof_train_probs(y_train, folds):
     return oof
 
 
-def test_seed_probs(y_test):
+def test_seed_probs(y_test, seed_paths):
     """One probability vector per seed, at that seed's best-val checkpoint."""
     per_seed = {}
-    for seed in SEEDS:
-        path = SEED_RUNS / str(seed) / 'test' / 'predictions.pt'
+    for seed, (label, path) in zip(SEEDS, seed_paths):
         y_true, y_pred, best_epoch = _load_pred(path)
-        _check_labels(f'test seed {seed}', y_true, y_test)
+        _check_labels(label, y_true, y_test)
         per_seed[seed] = y_pred
         print(f'  seed {seed}: {len(y_pred):>4} test molecules, '
               f'best-val checkpoint epoch {best_epoch}')
@@ -171,6 +207,19 @@ def test_seed_probs(y_test):
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap.add_argument('--arm', default='rdkit_fg', choices=sorted(ARMS),
+                    help="Ablation arm to export. Default: rdkit_fg, the "
+                         "selected configuration. Exporting another arm is an "
+                         "ablation-context harvest, not a re-selection.")
+    args = ap.parse_args()
+    arm = ARMS[args.arm]
+    config = arm['config']
+    out_path = PRED_DIR / f'dgt_oof_test_{args.arm}.parquet'
+    print(f'arm     {args.arm} — {arm["about"]}')
+    print(f'config  {config}')
+    print(f'output  {out_path}')
+
     with open(RAW_DIR / 'manifest.json') as fh:
         manifest = json.load(fh)
     smiles_col, target_col = manifest['smiles_column'], manifest['target_column']
@@ -181,18 +230,34 @@ def main():
 
     # Mirrors setup_cv_train_split: the CV pool is every non-test row in dataset
     # order, which (nothing dropped at featurisation) is train.parquet in file
-    # order. Verified by _check_labels below.
+    # order. Verified by _check_labels below. Independent of the arm, which is
+    # what makes two arms' exports paired molecule by molecule.
     skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True,
                           random_state=CV_RANDOM_STATE)
-    folds = [val_pos for _, val_pos in skf.split(np.zeros(len(y_train)), y_train)]
+    fold_index = [val_pos for _, val_pos in
+                  skf.split(np.zeros(len(y_train)), y_train)]
     fold_of = np.empty(len(y_train), dtype=np.int64)
-    for i, idx in enumerate(folds):
+    for i, idx in enumerate(fold_index):
         fold_of[idx] = i
 
+    _banner('0. Preflight — every source dump this export reads')
+    fold_paths, seed_paths = _source_paths(config)
+    missing = []
+    for label, path in fold_paths + seed_paths:
+        ok = path.is_file()
+        missing += [] if ok else [path]
+        print(f'  {"OK  " if ok else "MISS"} {label:<12} {path}')
+    if missing:
+        raise SystemExit(
+            f"\n{len(missing)} source dump(s) missing for arm '{args.arm}'. "
+            f"This export harvests existing runs and does not train; the "
+            f"listed runs must be present (or re-run) first."
+        )
+
     _banner('Harvesting out-of-fold probabilities (5-fold CV on train)')
-    oof = oof_train_probs(y_train, folds)
+    oof = oof_train_probs(y_train, fold_index, fold_paths)
     _banner('Harvesting test probabilities (4 seeds)')
-    per_seed = test_seed_probs(y_test)
+    per_seed = test_seed_probs(y_test, seed_paths)
     stacked = np.vstack([per_seed[s] for s in SEEDS])
 
     train_rows = pd.DataFrame({
@@ -247,6 +312,31 @@ def main():
         raise RuntimeError('SMILES do not round-trip 1:1 against the source '
                            'parquet; the downstream join would be wrong.')
 
+    _banner('2b. Cross-check against arms already exported')
+    others = sorted(p for p in PRED_DIR.glob('dgt_oof_test_*.parquet')
+                    if p != out_path)
+    if not others:
+        print('  (no other arm exported yet — nothing to cross-check)')
+    for other in others:
+        ref = pd.read_parquet(other, columns=['smiles', 'split', 'true', 'fold'])
+        pair = out.merge(ref, on=['smiles', 'split'], how='inner',
+                         suffixes=('', '_ref'))
+        joined = len(pair) == len(out)
+        same_true = bool((pair['true'] == pair['true_ref']).all())
+        same_fold = bool((pair['fold'] == pair['fold_ref']).all())
+        print(f'  vs {other.name}')
+        print(f'    joined 1:1            {len(pair)}/{len(out)}   '
+              f'{"OK" if joined else "FAIL"}')
+        print(f'    `true` identical      {same_true}   '
+              f'{"OK" if same_true else "FAIL"}')
+        print(f'    `fold` identical      {same_fold}   '
+              f'{"OK" if same_fold else "FAIL"}   <- folds coincide, so the '
+              f'arms are paired per molecule')
+        if not (joined and same_true and same_fold):
+            raise RuntimeError(
+                f'{other.name} disagrees with this export on keys, labels or '
+                f'fold assignment; a paired comparison would be invalid.')
+
     _banner('3. Class balance')
     for split, expected in (('train', POS_TRAIN), ('test', POS_TEST)):
         got = int(out.loc[out['split'] == split, 'true'].sum())
@@ -263,18 +353,22 @@ def main():
                  for _, g in tr.groupby('fold')]
     mean, std = _mean_pstd(fold_aucs)
     print('    per-fold roc_auc           ' + ', '.join(f'{v:.4f}' for v in fold_aucs))
-    _report(f'mean +- {std:.4f}', mean, PAPER_CV_AUC)
+    _report(f'mean +- {std:.4f}', mean, arm['cv_auc'])
 
     te = out[out['split'] == 'test']
     y_te = te['true'].to_numpy()
     print('\n  Test, 278 molecules:')
     print('    (a) per seed, then averaged — the single-model form, use this '
           'for cross-model comparison:')
-    for key, paper in (('f1@0.5', PAPER_TEST_F1), ('roc_auc', PAPER_TEST_AUC),
-                       ('auprc', PAPER_TEST_AP)):
+    for key in ('f1@0.5', 'roc_auc', 'auprc'):
         vals = [_binary_metrics(y_te, te[c].to_numpy())[key] for c in seed_cols]
         mean, std = _mean_pstd(vals)
-        _report(f'{key} mean +- {std:.4f}', mean, paper)
+        label = f'{key} mean +- {std:.4f}'
+        if arm['test'] is not None:
+            _report(label, mean, arm['test'][key])
+        else:
+            print(f'    {label:<26} {mean:.4f}    (no published value — §5.3 '
+                  f'reads test for the selected arm only)')
     m = _binary_metrics(y_te, te['prob'].to_numpy())
     print('    (b) from the seed-mean `prob` — a 4-model ensemble, expected '
           'slightly higher:')
@@ -284,20 +378,20 @@ def main():
     _banner('5. Numeric precision')
     probs = out[['prob'] + seed_cols].to_numpy()
     probs = probs[~np.isnan(probs)]
-    print(f'  Dumps are float16 (torch.autocast in dgt_train.py) widened to '
-          f'float64 losslessly.')
+    print('  Dumps are float16 (torch.autocast in dgt_train.py) widened to '
+          'float64 losslessly.')
     print(f'  exactly 0.0           {int((probs == 0.0).sum())}')
     print(f'  exactly 1.0           {int((probs == 1.0).sum())}')
     print('  Ranking metrics (ROC-AUC, AUPRC) are unaffected. Log-loss and the '
           'extreme bins of a\n  calibration curve are: saturated values give '
           'an infinite log-loss term. Clip before\n  computing either.')
 
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    out.to_parquet(OUT_PATH, index=False)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(out_path, index=False)
     _banner('Written')
-    print(f'  {OUT_PATH}')
+    print(f'  {out_path}')
     print(f'  shape={out.shape}  columns={out.columns.tolist()}')
-    print(f'\n  Upload with:\n    aws s3 cp {OUT_PATH} {S3_DEST}')
+    print(f'\n  Upload with:\n    aws s3 cp {out_path} {S3_DEST}')
 
 
 if __name__ == '__main__':
