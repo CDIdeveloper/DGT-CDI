@@ -629,6 +629,68 @@ the prefixes above are not overwritten.
 
 ---
 
+## 10.2 Per-molecule prediction export
+
+For the cross-model analysis, DGT's per-molecule probabilities were exported to a single table
+so they can be joined by SMILES against the gradient-boosting and MPNN predictions. **No model
+was trained for this.** The file harvests probabilities already written to disk by the runs
+reported in §5.2b and §5.3, and makes no new decision about the test split.
+
+`dgt_oof_test_rdkit_fg.parquet` — 5542 rows, selected configuration only
+(`BiodegNoInd-DGT-Pipeline-WithDesc-nongwu`, `rdkit_fg`, 207 descriptors). Deposited at
+`s3://cdi-lab-workspaces/ts_project_1/data/biodegradation/GWU/predictions/`, alongside the
+MPNN's `mpnn_oof_test_qm_rdkit.parquet`. Produced by
+[`export_oof_test_predictions.py`](../../scripts/export_oof_test_predictions.py).
+
+| Rows | n | Source runs | Checkpoints |
+|---|---|---|---|
+| `split == 'train'` | 5264 | the 5-fold CV of §5.2b (2026-09-02), out-of-fold | best-val by ROC-AUC, per fold: epochs 25, 34, 12, 28, 17 |
+| `split == 'test'` | 278 | the 4 seeds of §5.3 (2026-09-01) | best-val by ROC-AUC, per seed: epochs 39, 27, 21, 31 |
+
+**Why the training rows are out-of-fold.** Under `split_mode: cv-train-5` a fold's held-out
+block *is* that run's validation split, and `dgt_train.py` dumps per-sample validation
+predictions at the best-val checkpoint. Each fold's `val/predictions.pt` is therefore its OOF
+block, and the five partition the train parquet exactly (1053×4 + 1052 = 5264): every training
+molecule is scored once, always by a model that did not fit it. Note that the deployment
+retrains of §10.1 are **not** a source here — those are fit on train+val.
+
+Columns: `smiles` (verbatim from `biodeg_gwu_b2_no_ind_{train,test}.parquet`, never
+re-canonicalised — the join is string-keyed and a re-canonicalised string would silently fail
+to match), `split`, `true`, `prob`, `prob_seed0..3` (test rows only, NaN on train), `fold`
+(0–4 on train rows, −1 on test).
+
+**`prob` on test rows is a 4-seed mean, which is an ensemble.** The models it is compared
+against are single models, so any comparison drawn from `prob` would credit DGT with
+ensembling this work does not otherwise claim. Test metrics must be computed per seed from
+`prob_seed0..3` and then averaged. The gap is not negligible:
+
+| Test, 278 molecules, threshold 0.5 | F1 | ROC-AUC | AUPRC |
+|---|---|---|---|
+| per seed, then averaged — **use this** | 0.8610 ± 0.0066 | 0.9196 ± 0.0027 | 0.9269 ± 0.0051 |
+| from the seed-mean `prob` — ensemble | 0.8699 | 0.9244 | 0.9311 |
+
+The training rows carry no such caveat — one model per fold — which is why they are the
+primary basis for the per-partition comparison. Recomputed from the file: pooled OOF ROC-AUC
+0.8904, AUPRC 0.8697, F1 @ 0.5 0.8064; and the mean of the five per-fold ROC-AUCs is
+0.8929 ± 0.0065, reproducing §5.2b's 0.8928 ± 0.0065.
+
+**Row identity is reconstructed, then verified.** `predictions.pt` stores bare label and score
+vectors with no molecule key. Mapping them back to SMILES relies on dataset index equalling
+parquet row (the loader featurises train then test in file order; the eval loaders do not
+shuffle) and on the fold assignment being reproducible from
+`StratifiedKFold(5, shuffle=True, random_state=1)`. The exporter does not assume either: it
+checks every dump's label vector elementwise against the parquet's and aborts on a mismatch.
+All nine dumps matched exactly.
+
+**Precision.** Scores are dumped as float16 — `_eval_and_collect` runs under `torch.autocast`
+— and are widened to float64 losslessly on export. Ranking metrics are unaffected, and the
+table above reproduces §5.3 exactly. But the resolution is roughly three decimal digits, and
+scores saturate at the ends of the range (the exporter reports how many are exactly 0.0 or
+1.0). A saturated score contributes an infinite log-loss term and distorts the extreme bins of
+a calibration curve; clip before computing either.
+
+---
+
 ## 11. Remaining work before submission
 
 - [x] Read the test set **once** for the selected configuration (§5.3, 2026-09-02).
