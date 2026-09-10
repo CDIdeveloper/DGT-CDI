@@ -248,16 +248,27 @@ other.
 
 Per-seed AUPRC: 0.9340, 0.9280, 0.9260, 0.9198.
 
+**On the other arms' test figures.** §10.2 reports test metrics for `qm_rdkit` and `none` as
+well, obtained by harvesting those arms' existing seed checkpoints for the cross-model export.
+That does not weaken the claim in this section. The selection was recorded before any test
+number was seen (§6) and confirmed independently under cross-validation (§6.2); the additional
+figures were produced afterwards, for an artifact, and were not an input to any decision. The
+figures in *this* section — the ones this work reports as its result — remain those of the
+selected configuration, unchanged.
+
 ### 5.4 Notes for cross-model comparison
 
 **Out of scope for this document.** Comparison against the gradient-boosting and MPNN
 baselines is performed centrally, where those models' full provenance (selection protocol,
 dispersion, package versions) is available. This repository owns the DGT numbers only.
 
-**Per-molecule probabilities are available** — see **§10.2**. `dgt_oof_test_rdkit_fg.parquet`
-carries out-of-fold probabilities for all 5264 training molecules and per-seed probabilities
-for all 278 test molecules, keyed by the same SMILES strings the other models use. Read §10.2
-before using it: test-row `prob` is a 4-seed mean, and averaging probabilities rather than
+**Per-molecule probabilities are available for three arms** — see **§10.2**.
+`dgt_oof_test_{rdkit_fg,qm_rdkit,none}.parquet` each carry out-of-fold probabilities for all
+5264 training molecules and per-seed probabilities for all 278 test molecules, keyed by the
+same SMILES strings the other models use, with fold assignments verified identical across
+arms. Use `rdkit_fg` for the headline comparison (it is the selected configuration) and
+`qm_rdkit` when a feature-set-matched comparison against the MPNN is wanted. Read §10.2 before
+using any of them: test-row `prob` is a 4-seed mean, and averaging probabilities rather than
 metrics would credit DGT with an ensemble the baselines do not get.
 
 What to carry forward when the comparison is assembled:
@@ -644,19 +655,41 @@ the prefixes above are not overwritten.
 
 For the cross-model analysis, DGT's per-molecule probabilities were exported to a single table
 so they can be joined by SMILES against the gradient-boosting and MPNN predictions. **No model
-was trained for this.** The file harvests probabilities already written to disk by the runs
-reported in §5.2b and §5.3, and makes no new decision about the test split.
+was trained for this.** The files harvest probabilities already written to disk by the runs
+reported in §5.2b and §5, and make no new decision about the test split.
 
-`dgt_oof_test_rdkit_fg.parquet` — 5542 rows, selected configuration only
-(`BiodegNoInd-DGT-Pipeline-WithDesc-nongwu`, `rdkit_fg`, 207 descriptors). Deposited at
-`s3://cdi-lab-workspaces/ts_project_1/data/biodegradation/GWU/predictions/`, alongside the
+Three arms were exported, each 5542 rows, all deposited at
+`s3://cdi-lab-workspaces/ts_project_1/data/biodegradation/GWU/predictions/` alongside the
 MPNN's `mpnn_oof_test_qm_rdkit.parquet`. Produced by
-[`export_oof_test_predictions.py`](../../scripts/export_oof_test_predictions.py).
+[`export_oof_test_predictions.py`](../../scripts/export_oof_test_predictions.py) (`--arm`).
+
+| File | Arm | Configuration | Purpose |
+|---|---|---|---|
+| `dgt_oof_test_rdkit_fg.parquet` | `rdkit_fg` (207) | `…-WithDesc-nongwu` | the **selected** configuration (§6); the headline artifact |
+| `dgt_oof_test_qm_rdkit.parquet` | `qm_rdkit` (247) | `…-WithDesc` | **feature-set-matched to the MPNN baseline**, so the two graph models can be compared without a descriptor confound |
+| `dgt_oof_test_none.parquet` | `none` | `BiodegNoInd-DGT-Pipeline` | graph only; lets the descriptor question be asked per molecule rather than per aggregate |
+
+> **These are ablation-context exports, not a re-selection.** The recorded selection remains
+> `rdkit_fg` (§6, confirmed §6.2) and the headline test figures in §5.3 are unchanged. The
+> non-selected arms are exported so the cross-model comparison can be feature-set-matched and
+> paired; their test figures below are post-hoc ablation context, produced after the selection
+> was recorded and after the test set had already been read for the selected arm. They were
+> not, and could not have been, an input to any decision. See §5.3.
+
+Every arm draws on the same two run families:
 
 | Rows | n | Source runs | Checkpoints |
 |---|---|---|---|
-| `split == 'train'` | 5264 | the 5-fold CV of §5.2b (2026-09-02), out-of-fold | best-val by ROC-AUC, per fold: epochs 25, 34, 12, 28, 17 |
-| `split == 'test'` | 278 | the 4 seeds of §5.3 (2026-09-01) | best-val by ROC-AUC, per seed: epochs 39, 27, 21, 31 |
+| `split == 'train'` | 5264 | the 5-fold CV of §5.2b (2026-09-02), out-of-fold | best-val by ROC-AUC, per fold |
+| `split == 'test'` | 278 | that arm's 4 seeds from the §5 ablation (2026-09-01) | best-val by ROC-AUC, per seed |
+
+Best-val checkpoint epochs, per arm — folds 0–4 then seeds 0–3:
+
+| Arm | Fold epochs | Seed epochs |
+|---|---|---|
+| `rdkit_fg` | 25, 34, 12, 28, 17 | 39, 27, 21, 31 |
+| `qm_rdkit` | 24, 17, 25, 36, 18 | 32, 39, 27, 32 |
+| `none` | 28, 25, 23, 31, 29 | 23, 27, 28, 27 |
 
 **Why the training rows are out-of-fold.** Under `split_mode: cv-train-5` a fold's held-out
 block *is* that run's validation split, and `dgt_train.py` dumps per-sample validation
@@ -673,17 +706,51 @@ to match), `split`, `true`, `prob`, `prob_seed0..3` (test rows only, NaN on trai
 **`prob` on test rows is a 4-seed mean, which is an ensemble.** The models it is compared
 against are single models, so any comparison drawn from `prob` would credit DGT with
 ensembling this work does not otherwise claim. Test metrics must be computed per seed from
-`prob_seed0..3` and then averaged. The gap is not negligible:
+`prob_seed0..3` and then averaged. The gap is not negligible, and it is largest for the arm
+whose seeds disagree most:
 
 | Test, 278 molecules, threshold 0.5 | F1 | ROC-AUC | AUPRC |
 |---|---|---|---|
-| per seed, then averaged — **use this** | 0.8610 ± 0.0066 | 0.9196 ± 0.0027 | 0.9269 ± 0.0051 |
-| from the seed-mean `prob` — ensemble | 0.8699 | 0.9244 | 0.9312 |
+| `rdkit_fg` — per seed, then averaged (**use this**) | 0.8610 ± 0.0066 | 0.9196 ± 0.0027 | 0.9269 ± 0.0051 |
+| `rdkit_fg` — from seed-mean `prob` (ensemble) | 0.8699 | 0.9244 | 0.9312 |
+| `qm_rdkit` — per seed, then averaged | 0.8638 ± 0.0081 | 0.9147 ± 0.0025 | 0.9204 ± 0.0031 |
+| `qm_rdkit` — from seed-mean `prob` (ensemble) | 0.8639 | 0.9177 | 0.9237 |
+| `none` — per seed, then averaged | 0.8087 ± 0.0199 | 0.9044 ± 0.0027 | 0.9146 ± 0.0032 |
+| `none` — from seed-mean `prob` (ensemble) | 0.8286 | 0.9144 | 0.9242 |
 
 The training rows carry no such caveat — one model per fold — which is why they are the
-primary basis for the per-partition comparison. Recomputed from the file: pooled OOF ROC-AUC
-0.8904, AUPRC 0.8697, F1 @ 0.5 0.8064; and the mean of the five per-fold ROC-AUCs is
-0.8929 ± 0.0065, reproducing §5.2b's 0.8928 ± 0.0065.
+primary basis for the per-partition comparison:
+
+| OOF-train, 5264 molecules | pooled ROC-AUC | pooled AUPRC | pooled F1 @ 0.5 | mean of per-fold ROC-AUC | §5.2b |
+|---|---|---|---|---|---|
+| `rdkit_fg` | 0.8904 | 0.8697 | 0.8064 | 0.8929 ± 0.0065 | 0.8928 ± 0.0065 |
+| `qm_rdkit` | 0.8907 | 0.8755 | 0.8071 | 0.8925 ± 0.0065 | 0.8925 ± 0.0064 |
+| `none` | 0.8861 | 0.8669 | 0.8079 | 0.8893 ± 0.0051 | 0.8893 ± 0.0051 |
+
+Each arm reproduces its §5.2b cross-validation figure to four decimal places, which is the
+check that the right runs were harvested. Note that the *pooled* OOF ROC-AUC is consistently
+below the mean of the per-fold values: pooling scores five separately-calibrated models onto
+one ranking, and the resulting cross-fold miscalibration costs a little discrimination. Both
+are reported because they answer different questions; the per-fold mean is the one comparable
+to §5.2b.
+
+**Consistency with §6.1 and §7.** `none` reproduces the F1 0.8087 quoted in §6.1 exactly. The
+two descriptor arms behave on test the way §7 describes them on validation: **the metrics
+disagree on sign.** `qm_rdkit` leads `rdkit_fg` on F1 by 0.0028 — well inside either arm's
+seed std — while trailing it on ROC-AUC by 0.0049 and AUPRC by 0.0065, each roughly two seed
+standard deviations. That is not evidence `rdkit_fg` ranks better: as §5.4 notes, seed std
+measures optimisation noise on a fixed split, not sampling variance of 278 molecules, which is
+substantially larger. A sign disagreement between F1 and ROC-AUC is exactly the pattern §7
+reports for the single validation split, now reproduced on test.
+
+The one arm that separates is `none`, and it separates far more on F1 (a gap of 0.052 to
+`rdkit_fg`) than on ROC-AUC (0.015) or AUPRC (0.012); its seed dispersion on F1, 0.0199, is
+two to three times any other arm's. F1 at a fixed 0.5 threshold depends on calibration in a
+way ROC-AUC does not, so a large F1 gap beside a small ranking gap is what §7's threshold
+analysis would predict. This is flagged rather than interpreted, for two reasons: it runs
+opposite to §5.2b, where `none` has the *smallest* F1 fold std of the four arms (0.0060); and
+4 seeds on 278 molecules cannot separate a calibration effect from noise. Settling it would
+need the added seeds of §12 item 1.
 
 **Row identity is reconstructed, then verified.** `predictions.pt` stores bare label and score
 vectors with no molecule key. Mapping them back to SMILES relies on dataset index equalling
@@ -691,16 +758,24 @@ parquet row (the loader featurises train then test in file order; the eval loade
 shuffle) and on the fold assignment being reproducible from
 `StratifiedKFold(5, shuffle=True, random_state=1)`. The exporter does not assume either: it
 checks every dump's label vector elementwise against the parquet's and aborts on a mismatch.
-All nine dumps matched exactly.
+All nine dumps matched exactly, for each of the three arms.
+
+**The arms are paired molecule by molecule.** The fold assignment is derived from the train
+parquet alone and never from the arm, so all three exports place each molecule in the same
+fold. The exporter verifies this rather than asserting it: on writing an arm it joins every
+previously written arm on `(smiles, split)` and requires the join to be 1:1 with `true` and
+`fold` identical row for row. All three arms pass against each other. A paired per-molecule
+comparison between arms — and, since the protocol fixes the same folds, against the other
+models — is therefore valid without any further alignment step.
 
 **Precision.** Scores are dumped as float16 — `_eval_and_collect` runs under `torch.autocast`
 — and are widened to float64 before averaging, losslessly. Ranking metrics are unaffected, and
-the table above reproduces §5.3 exactly. But the resolution is roughly three decimal digits,
-and 4 of the 6654 stored scores saturate (one at exactly 0.0, three at exactly 1.0). A
-saturated score contributes an infinite log-loss term and distorts the extreme bins of a
-calibration curve; clip before computing either. Note also that the seed mean must be taken in
-float64, as the exporter does — averaging the raw float16 vectors shifts the ensemble AUPRC in
-the table above by 0.0001.
+the tables above reproduce §5.2b and §5.3 exactly. But the resolution is roughly three decimal
+digits, and a handful of the 6654 stored scores per arm saturate: 1 at 0.0 and 3 at 1.0 for
+`rdkit_fg`, 4 and 6 for `qm_rdkit`, 4 and 21 for `none`. A saturated score contributes an
+infinite log-loss term and distorts the extreme bins of a calibration curve; clip before
+computing either. Note also that the seed mean must be taken in float64, as the exporter does
+— averaging the raw float16 vectors shifts the ensemble AUPRC above by 0.0001.
 
 ---
 
@@ -712,8 +787,9 @@ the table above by 0.0001.
       confirmed (§5.2b, §6.2, 2026-09-02).
 - [x] Retrain the selected configuration on train+val and deposit the deployment bundle
       (§10.1), rebuilt on the CV-derived 29-epoch budget.
-- [x] Export per-molecule OOF-train + test probabilities for the cross-model comparison
-      (§10.2, 2026-09-10). No training; harvested from the §5.2b and §5.3 runs.
+- [x] Export per-molecule OOF-train + test probabilities for the cross-model comparison —
+      three arms, `rdkit_fg` / `qm_rdkit` / `none` (§10.2, 2026-09-10). No training; harvested
+      from the §5.2b and §5 ablation runs.
 - [ ] **Decide the framing** — whether the "test-selected ablation gains do not replicate"
       finding (§8) is a headline contribution or a methods note. Options drafted side by side
       in [paper_framing_options.md](paper_framing_options.md). This is the only open item that
@@ -763,13 +839,11 @@ uncertainty, or extend the study beyond its current scope.
    is a prerequisite if §8 is framed as the headline contribution (see
    [paper_framing_options.md](paper_framing_options.md)).
 
-7. **Export per-molecule predictions for the graph-only arm too** (§10.2 currently covers
-   `rdkit_fg` only). The CV folds and the 4 seeds exist on disk for all four configurations, so
-   this costs no GPU time —
-   [`export_oof_test_predictions.py`](../../scripts/export_oof_test_predictions.py) would need
-   only its `CONFIG` constant changed. The payoff is that §7's descriptor question could be
-   asked **per molecule** rather than per aggregate: which molecules the descriptor channel
-   actually moves, and whether those moves concentrate in any partition. One caveat to record
-   if this is done — the graph-only arm's seed 0 was destroyed by a smoke test and re-trained
-   (§10), so its test block comes from the re-run, not from the run behind §6.1's figures. The
-   OOF-train rows are unaffected, and they are the stronger basis anyway.
+7. **Analyse the three exported arms per molecule.** The export itself is done (§10.2 now
+   covers `rdkit_fg`, `qm_rdkit` and `none`, with folds verified identical across all three),
+   so the data to answer §7's descriptor question **per molecule** rather than per aggregate is
+   on hand: which molecules the descriptor channel actually moves, and whether those moves
+   concentrate in any chemical partition. What remains is the analysis, which belongs on the
+   cross-model side where the partition assignments live. The `qm` (GWU-only, 40) arm was not
+   exported — it is the one arm §7 finds significantly *worse*, so it is of least interest
+   here; adding it would cost only another `--arm` entry.
