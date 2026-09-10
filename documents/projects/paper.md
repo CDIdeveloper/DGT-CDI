@@ -3,13 +3,18 @@
 Working document for a publication on applying the Dual Graph Transformer (DGT) to
 ready-biodegradability classification, with a molecular-descriptor late-fusion ablation.
 
-**Status (2026-09-02):** configuration selected on validation with test suppressed; test set
+**Status (2026-09-10):** configuration selected on validation with test suppressed; test set
 then read **once** for the selected configuration (§5.3). Headline: DGT reaches
-**F1 0.8610 ± 0.0066, ROC-AUC 0.9196 ± 0.0027** on the 278-molecule test set.
+**F1 0.8610 ± 0.0066, ROC-AUC 0.9196 ± 0.0027** on the 278-molecule test set. Per-molecule
+probabilities for the cross-model comparison are exported and deposited (§10.2).
 
 Related: [gwu.md](gwu.md) (earlier study on the *different* `biodeg_gwu` dataset —
 see §8 before citing it), [../dgt_porting_guide.md](../dgt_porting_guide.md) (protocol
 this work follows), [../trained_models.md](../trained_models.md) (model registry).
+
+> Relative links below resolve inside the **DGT-CDI** repository, where this document lives at
+> `documents/projects/paper.md`. They will not resolve in a copy held elsewhere — the prose is
+> self-contained without them.
 
 ---
 
@@ -248,6 +253,12 @@ Per-seed AUPRC: 0.9340, 0.9280, 0.9260, 0.9198.
 **Out of scope for this document.** Comparison against the gradient-boosting and MPNN
 baselines is performed centrally, where those models' full provenance (selection protocol,
 dispersion, package versions) is available. This repository owns the DGT numbers only.
+
+**Per-molecule probabilities are available** — see **§10.2**. `dgt_oof_test_rdkit_fg.parquet`
+carries out-of-fold probabilities for all 5264 training molecules and per-seed probabilities
+for all 278 test molecules, keyed by the same SMILES strings the other models use. Read §10.2
+before using it: test-row `prob` is a 4-seed mean, and averaging probabilities rather than
+metrics would credit DGT with an ensemble the baselines do not get.
 
 What to carry forward when the comparison is assembled:
 
@@ -667,7 +678,7 @@ ensembling this work does not otherwise claim. Test metrics must be computed per
 | Test, 278 molecules, threshold 0.5 | F1 | ROC-AUC | AUPRC |
 |---|---|---|---|
 | per seed, then averaged — **use this** | 0.8610 ± 0.0066 | 0.9196 ± 0.0027 | 0.9269 ± 0.0051 |
-| from the seed-mean `prob` — ensemble | 0.8699 | 0.9244 | 0.9311 |
+| from the seed-mean `prob` — ensemble | 0.8699 | 0.9244 | 0.9312 |
 
 The training rows carry no such caveat — one model per fold — which is why they are the
 primary basis for the per-partition comparison. Recomputed from the file: pooled OOF ROC-AUC
@@ -683,11 +694,13 @@ checks every dump's label vector elementwise against the parquet's and aborts on
 All nine dumps matched exactly.
 
 **Precision.** Scores are dumped as float16 — `_eval_and_collect` runs under `torch.autocast`
-— and are widened to float64 losslessly on export. Ranking metrics are unaffected, and the
-table above reproduces §5.3 exactly. But the resolution is roughly three decimal digits, and
-scores saturate at the ends of the range (the exporter reports how many are exactly 0.0 or
-1.0). A saturated score contributes an infinite log-loss term and distorts the extreme bins of
-a calibration curve; clip before computing either.
+— and are widened to float64 before averaging, losslessly. Ranking metrics are unaffected, and
+the table above reproduces §5.3 exactly. But the resolution is roughly three decimal digits,
+and 4 of the 6654 stored scores saturate (one at exactly 0.0, three at exactly 1.0). A
+saturated score contributes an infinite log-loss term and distorts the extreme bins of a
+calibration curve; clip before computing either. Note also that the seed mean must be taken in
+float64, as the exporter does — averaging the raw float16 vectors shifts the ensemble AUPRC in
+the table above by 0.0001.
 
 ---
 
@@ -699,6 +712,8 @@ a calibration curve; clip before computing either.
       confirmed (§5.2b, §6.2, 2026-09-02).
 - [x] Retrain the selected configuration on train+val and deposit the deployment bundle
       (§10.1), rebuilt on the CV-derived 29-epoch budget.
+- [x] Export per-molecule OOF-train + test probabilities for the cross-model comparison
+      (§10.2, 2026-09-10). No training; harvested from the §5.2b and §5.3 runs.
 - [ ] **Decide the framing** — whether the "test-selected ablation gains do not replicate"
       finding (§8) is a headline contribution or a methods note. Options drafted side by side
       in [paper_framing_options.md](paper_framing_options.md). This is the only open item that
@@ -747,3 +762,14 @@ uncertainty, or extend the study beyond its current scope.
    `biodeg` (no-Reaxys) and `biodeg_gwu` would materially strengthen the methods claim — and
    is a prerequisite if §8 is framed as the headline contribution (see
    [paper_framing_options.md](paper_framing_options.md)).
+
+7. **Export per-molecule predictions for the graph-only arm too** (§10.2 currently covers
+   `rdkit_fg` only). The CV folds and the 4 seeds exist on disk for all four configurations, so
+   this costs no GPU time —
+   [`export_oof_test_predictions.py`](../../scripts/export_oof_test_predictions.py) would need
+   only its `CONFIG` constant changed. The payoff is that §7's descriptor question could be
+   asked **per molecule** rather than per aggregate: which molecules the descriptor channel
+   actually moves, and whether those moves concentrate in any partition. One caveat to record
+   if this is done — the graph-only arm's seed 0 was destroyed by a smoke test and re-trained
+   (§10), so its test block comes from the re-run, not from the run behind §6.1's figures. The
+   OOF-train rows are unaffected, and they are the stronger basis anyway.
