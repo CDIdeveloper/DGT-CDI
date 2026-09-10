@@ -179,8 +179,8 @@ contributes the metric at its own best-validation epoch.
 | `qm` (GWU only) | 40 | 0.8119 ± 0.0050 | 0.8829 ± 0.0015 | 37 / 32 |
 
 > **Graph-only arm re-run 2026-09-02.** Its seed 0 was overwritten by a smoke test (§10) and
-> re-trained for 50 epochs. F1 figures above are the refreshed values; the ROC-AUC figure is
-> pending a re-ranking. The re-run moved seed 0's val F1 from 0.8053 to 0.8180 — **0.0127 on a
+> re-trained for 50 epochs. Both figures above are the refreshed values. The re-run moved
+> seed 0's val F1 from 0.8053 to 0.8180 — **0.0127 on a
 > single seed from GPU non-determinism alone**, which is larger than every gap in this table
 > and is the strongest single piece of evidence for §7's conclusion that these four
 > configurations are not distinguishable at four seeds. It also **reordered the ROC-AUC
@@ -253,13 +253,15 @@ What to carry forward when the comparison is assembled:
 
 - All figures in §5.3 are at the **fixed 0.5 threshold**, from probabilities, on the fixed
   278-molecule test split — the definitions required for comparability.
-- DGT was selected on a **single 90/10 validation split**, not 5-fold CV on train (§9 item 1).
-  A CV-matched comparison is not yet possible from this side; implementing the CV harness is
-  the open item that would enable it.
-- **AUPRC is not yet computed** for DGT (§11).
-- Dispersion is over **4 training seeds** on a fixed split — it captures optimisation
-  variance, not sampling variance of the 278-molecule test set, which is substantially
-  larger. Seed std should not be read as a confidence interval on the metric.
+- Selection was made on a single 90/10 validation split and then **confirmed under stratified
+  5-fold CV on train** (`random_state=1`, §5.2b, §6.2), so a CV-matched comparison is possible
+  from this side. CV figures for all four arms are in §5.2b.
+- **AUPRC is 0.9269 ± 0.0051** (§5.3).
+- Dispersion in §5.3 is over **4 training seeds** on a fixed split — it captures optimisation
+  variance, not sampling variance of the 278-molecule test set, which is substantially larger.
+  Seed std should not be read as a confidence interval on the metric. The CV figures in §5.2b
+  report fold-to-fold variation instead, which is larger and the more honest dispersion for
+  comparing configurations.
 
 ---
 
@@ -322,11 +324,13 @@ on the technicality of having been written down first.
 
 ## 7. Observations
 
-**The descriptor channel is approximately neutral on this dataset.** The best descriptor arm
-improves validation F1 by 0.0050 over graph-only (0.8165 vs 0.8115) — roughly 0.8 standard
-deviations — and validation ROC-AUC by 0.0001 (0.8876 vs 0.8875), which is indistinguishable
-from zero. The full spread across all four arms is 0.0050 on F1 and 0.0047 on AUC, comparable
-in magnitude to the seed-to-seed variation within a single arm.
+**The descriptor channel is approximately neutral on this dataset.** On the single validation
+split (§5.1), the best descriptor arm leads graph-only by **+0.0018** on F1 (0.8165 vs 0.8147)
+— well inside either arm's seed standard deviation (0.0037, 0.0054) — while on ROC-AUC the
+**graph-only arm leads** by 0.0024 (0.8900 vs 0.8876). The two metrics disagree on sign.
+Ranges across all four arms are 0.0046 (F1) and 0.0071 (AUC). Cross-validation (§5.2b)
+supersedes these single-split figures and reaches the same conclusion on far more validation
+data; the paired fold-by-fold analysis below is the authoritative version.
 
 **Quantum-mechanical descriptors carry less signal than RDKit descriptors, and add nothing on
 top of them.** This is the clearest effect in the study — the only comparison that reaches

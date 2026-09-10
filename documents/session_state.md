@@ -4,58 +4,95 @@
 > Durable docs ([overview.md](overview.md), [tech.md](tech.md), [modeling_routine.md](modeling_routine.md), [trained_models.md](trained_models.md), [config_reference.md](config_reference.md), [graph_transformer.md](graph_transformer.md), [dgt_porting_guide.md](dgt_porting_guide.md), [upstream_sync.md](upstream_sync.md)) describe *how* the project works. This doc captures *where it is right now*.
 > PR-in-progress records: [adr/0001-pr-mol-desc.md](adr/0001-pr-mol-desc.md), [log/pr-1-mol-desc.md](log/pr-1-mol-desc.md), [projects/gwu.md](projects/gwu.md), [projects/paper.md](projects/paper.md).
 
-**Last updated:** 2026-09-02
+**Last updated:** 2026-09-09
 
 ---
 
-## Current focus — `biodeg_gwu_no_ind` (2026-08-31 → 09-02)
+## Current focus — `biodeg_gwu_no_ind` (2026-08-31 → 09-09)
 
-**Where we are:** the canonical dataset (5264 train / 278 test, InD removed) is onboarded and
-the 4-arm descriptor ablation is complete. The winner was selected **on validation with test
-suppressed** — the first selection in this project made under the porting-guide §2 protocol.
-Full write-up: **[projects/paper.md](projects/paper.md)** (paper base doc: methods, results,
-per-seed values, leakage audit, limitations).
+**Status: the science is done and both models are deployed.** What remains is two decisions
+(§8 framing, and merging the branch) plus optional polish. Full write-up:
+**[projects/paper.md](projects/paper.md)** — methods, results, per-seed and per-fold values,
+leakage audit, limitations, future work.
 
-- **Selected config:** `BiodegNoInd-DGT-Pipeline-WithDesc-nongwu` (207 RDKit/fg descriptors).
-  F1 top-two tied within seed std (0.8165 vs 0.8164) → broken on ROC-AUC (0.8876 vs 0.8853).
-  Recorded 2026-09-02, before any test number was read.
-- **Headline finding:** the descriptor channel is ~neutral here (best F1 +0.0050 over
-  graph-only, ROC-AUC +0.0001) — the earlier +0.0183 in [projects/gwu.md](projects/gwu.md)
-  does **not** replicate once selection moves off the test set.
-- **Confirmed by 5-fold CV (2026-09-02).** The §2 protocol is now implemented
-  (`split_mode: cv-train-<k>` + `scripts/cv/`) and run: all four arms tie on F1, AUC tiebreak
-  selects `rdkit_fg` — the same config the single-split selection recorded. Artifacts in
-  `results/DGT_cv/`. Paired fold-by-fold, descriptors give F1 +0.0009 (3/5 folds) and
-  ROC-AUC +0.0035 (4/5 folds, p ≈ 0.09) over graph-only: **no established benefit.**
-- **Test read once** for the selected config: F1 0.8610 ± 0.0066, ROC-AUC 0.9196 ± 0.0027,
-  AUPRC 0.9269 ± 0.0051.
-- **Two deployment bundles built** (`rdkit_fg` and graph-only) — see
-  [projects/paper.md](projects/paper.md) §10.1. Graph-only ships alongside because it needs
-  only SMILES at inference; on this dataset the two are indistinguishable.
+### Result
 
-**Built this session:** `biodeg_gwu_no_ind` loader + format registration + 4 configs;
-[scripts/rank_configs_by_val.py](../scripts/rank_configs_by_val.py) (validation-based config
-ranking, dataset guard, F1/AUC override); [upstream_sync.md](upstream_sync.md) (fork
-provenance + merge checklist); modeling_routine Step 0 (dataset onboarding) and a rewritten
-Step 6 (select on validation, not test); dataset/test-selection warnings on
-[trained_models.md](trained_models.md) and [projects/gwu.md](projects/gwu.md).
+Canonical dataset: 5264 train / 526 val / 278 test, InD removed, 247 descriptors
+(40 QM `_gwu` + 207 RDKit/fg).
 
-**Built this session (continued):** `split_mode: cv-train-<k>` (folds train+val only, test
-untouched) and `scripts/cv/` (`dgt_cv_config.py`, `dgt_common.py`, `run_cv.py` — resumable
-5-fold sweep, §2 selection rule, JSON+MD report); median-**val** seed choice in
-`retrain_on_trainval.py`; validation-fitted decision thresholds
-(`dgt_train.py` dumps `val/predictions.pt`, `analyze_run.py` consumes it); project gotchas in
-[../CLAUDE.md](../CLAUDE.md).
+- **Selected config:** `BiodegNoInd-DGT-Pipeline-WithDesc-nongwu` (`rdkit_fg`, 207 desc).
+  Recorded 2026-09-02 on validation with test suppressed; **confirmed independently by
+  stratified 5-fold CV** (all four arms tie on F1 → AUC tiebreak → same config).
+- **Test, read once:** F1 0.8610 ± 0.0066, ROC-AUC 0.9196 ± 0.0027, AUPRC 0.9269 ± 0.0051
+  (4 seeds, threshold 0.5).
+- **Three publishable findings** (paper.md §7):
+  1. **QM descriptors are significantly weaker than RDKit/fg** and add nothing on top of them
+     — ΔF1 −0.0091, **0/5 folds**, t = −7.36, p ≈ 0.002. The only significant effect found.
+  2. **F1-argmax thresholds are unidentifiable** at n = 278 — plateau spans ~half the
+     probability scale; the argmax sits on one molecule's score, and nudging it 1.5e-5 moves
+     F1 by 0.004. Thresholds across checkpoints spanned 0.357–0.667 with ROC-AUC unchanged.
+  3. **A single seed re-run reordered the four-arm ranking** and changed which config the
+     protocol selects (§6.1) — 0.0127 F1 on one seed, larger than the whole between-arm spread.
+- **Descriptor benefit: not established.** Paired across folds, `rdkit_fg` − `none` is
+  ROC-AUC +0.0035 (p ≈ 0.09, 4/5 folds) and F1 +0.0009 (n.s.). The +0.0183 reported in
+  [projects/gwu.md](projects/gwu.md) does not replicate — though that comparison also spans a
+  dataset change, which is why it is *not* the strongest evidence (see framing doc).
 
-**Next actions, in order:**
-1. Copy both bundles to `results/final_models/` and upload to S3 (paper.md §10.1 has the
-   URIs). Verify each manifest's `best_f1_threshold` is the value measured on that deployed
-   checkpoint, not one inherited from a training seed.
-2. Optional: rebuild the `rdkit_fg` bundle at the CV-derived 29-epoch budget
-   (`retrain_on_trainval.py --epochs 29`) instead of the 22 taken from one seed's val curve.
-3. Open items in paper.md §11 — AUPRC done, CV done; what remains is the descriptor-effect
-   question (ROC-AUC +0.0035, p ≈ 0.09), whether to add seeds within folds, and the §8
-   framing decision.
+### Deployed — all four bundles in S3, verified 9 objects each (2026-09-03)
+
+`s3://cdi-lab-workspaces/ts_project_1/models/biodegradation/GWU/<bundle>/`
+and locally in `results/final_models/`. Index with full provenance:
+**[../results/final_models/INDEX.md](../results/final_models/INDEX.md)**.
+
+| Bundle | Feature set | Budget | Threshold |
+|---|---|---|---|
+| `biodeg-no-ind-dgt-nongwu-2026-09-03` | `rdkit_fg` (207) | 29 ep (CV) | 0.5 |
+| `biodeg-no-ind-dgt-graphonly-2026-09-03` | `none` | 33 ep (CV) | 0.5 |
+
+Both `2026-09-02` bundles are superseded (seed-derived budgets) but retained. Three undated
+legacy bundles are pre-protocol (test-selected seeds, argmax thresholds) — flagged in INDEX.md
+as do-not-cite.
+
+**Deploy `graphonly`** unless the descriptor variant is specifically needed: it takes SMILES
+only, while `nongwu` requires the caller to supply 207 RDKit/fg columns in training order. The
+two are statistically indistinguishable.
+
+### Built across this session
+
+- **Dataset:** `biodeg_gwu_no_ind` loader, format registration, 4 configs.
+- **CV harness:** `split_mode: cv-train-<k>` (folds train+val only, test untouched,
+  `random_state=1` per guide §2) + `scripts/cv/{dgt_cv_config,dgt_common,run_cv}.py` —
+  resumable sweep, §2 selection rule, JSON+MD report. Artifacts in `results/DGT_cv/`.
+- **Leak-free selection tooling:** `scripts/rank_configs_by_val.py` (val-based ranking,
+  dataset guard, `--metric` override, `--hide-test`); median-**val** seed choice in
+  `retrain_on_trainval.py` (+ `--epochs` override); `dgt_train.py` dumps `val/predictions.pt`;
+  `analyze_run.py` fits the threshold on val; `retrain_on_trainval.py` writes
+  `best_f1_threshold: null` rather than inheriting a training seed's value, and `predict.py`
+  fails loudly on null.
+- **Docs:** [projects/paper.md](projects/paper.md),
+  [projects/paper_framing_options.md](projects/paper_framing_options.md),
+  [upstream_sync.md](upstream_sync.md), [../results/final_models/INDEX.md](../results/final_models/INDEX.md),
+  modeling_routine Step 0 + rewritten Step 6, project gotchas in [../CLAUDE.md](../CLAUDE.md),
+  supersession banners on [trained_models.md](trained_models.md) and
+  [projects/gwu.md](projects/gwu.md).
+- **`.gitignore`:** `results/` now tracks exactly one file, `final_models/INDEX.md` (tested
+  against a 33-file dummy tree).
+
+### Next actions
+
+1. **Merge `mol-desc` → `main`.** 24 commits plus 6 uncommitted files
+   (`.gitignore`, `paper.md`, `trained_models.md`, `paper_framing_options.md`,
+   `results/final_models/INDEX.md`). `main` has none of this work.
+   [upstream_sync.md](upstream_sync.md) §5: leaving it stranded means resolving the same
+   `master_loader.py` / `san_graph.py` conflicts twice if upstream ever sends an update.
+2. **Decide the §8 framing** — the only open item that changes the paper's shape. Both drafts
+   with costs in [projects/paper_framing_options.md](projects/paper_framing_options.md);
+   recommendation is Option C now, B later.
+3. **Unverified housekeeping** (may already be done): back up `results/` metadata
+   (`tar --exclude='*.ckpt'`) to S3, since `results/DGT_cv/dgt_cv_results.{json,md}` is cited
+   in paper.md §10 and exists on one machine only; and confirm the `biodeg_gwu_no_ind` entry in
+   trans_learn's `settings.py` is committed in that repo.
+4. Everything else is optional — paper.md §12 Future work.
 
 **Note:** everything below this section predates the `biodeg_gwu_no_ind` work and refers to
 the older `biodeg_gwu` dataset (300-row test, test-selected). Kept for history.
@@ -95,7 +132,16 @@ the older `biodeg_gwu` dataset (300-row test, test-selected). Kept for history.
 2. **predict.py S3 input** = full `s3://cdi-lab-workspaces/<key>` URI (needs s3fs + AWS creds — present). A bare key is treated as a local path.
 3. **Descriptor models at predict time** need the descriptor columns in the input table; extra columns (e.g. the 40 `_gwu` in the full test parquet) are fine — selected by name, rest ignored, all preserved in output.
 
-## 🚩 Next-session task order
+## 🚩 Next-session task order — SUPERSEDED (2026-06-10)
+
+> ⚠️ **Historical.** This block and the one below plan the `biodeg_gwu` work and were written
+> before the `biodeg_gwu_no_ind` study. Items 1–2 were completed on a different dataset;
+> item 5 (merge `mol-desc`) is still open and now carries 24 commits.
+> **For current next actions see [Next actions](#next-actions) at the top of this file.**
+
+<details>
+<summary>Expand the 2026-06-10 plan</summary>
+
 
 1. **Confirm the non-GWU deployment bundle.** Run (if not already): `rm datasets/biodeg_gwu/processed/data_stdesc_fa7b7fe0.pt` → `python scripts/retrain_on_trainval.py results/DGT/Biodeg-GWU-DGT-Pipeline-WithDesc-nongwu/` → verify `final_model.json` has `descriptor_columns` (207) + `desc_stats`. Optional end-to-end predict on the S3 test parquet (command in [projects/gwu.md](projects/gwu.md) / chat).
 2. **Record the non-GWU winner** in [trained_models.md](trained_models.md) (Final models table).
@@ -107,3 +153,5 @@ the older `biodeg_gwu` dataset (300-row test, test-selected). Kept for history.
 ## Where to start next session
 
 Pick up at **Next-session task order #1** (confirm the non-GWU bundle / cache rebuild) — that's the only thing with a loose end. Everything else (docs, MLP baseline, merge) is independent and can be done in any order. All Phase-2 code is implemented, compiles, and has been run on the remote; no code is mid-edit.
+
+</details>

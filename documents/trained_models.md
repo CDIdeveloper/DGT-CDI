@@ -85,10 +85,16 @@ Validation, 4 seeds, mean ± population std. F1 primary, ROC-AUC tiebreak.
 | `rdkit_fg` (non-GWU) ← **selected** | [BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline-WithDesc-nongwu.yaml) | 207 | 0.8164 ± 0.0065 | **0.8876 ± 0.0010** |
 | `qm_rdkit` (all) | [BiodegNoInd-DGT-Pipeline-WithDesc.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline-WithDesc.yaml) | 247 | **0.8165 ± 0.0037** | 0.8853 ± 0.0026 |
 | `qm` (GWU only) | [BiodegNoInd-DGT-Pipeline-WithDesc-gwu.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline-WithDesc-gwu.yaml) | 40 | 0.8119 ± 0.0050 | 0.8829 ± 0.0015 |
-| `none` (graph only) | [BiodegNoInd-DGT-Pipeline.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline.yaml) | — | 0.8115 ± 0.0062 | 0.8875 ± 0.0051 |
+| `none` (graph only) | [BiodegNoInd-DGT-Pipeline.yaml](../configs/biodegradability/BiodegNoInd-DGT-Pipeline.yaml) | — | 0.8147 ± 0.0054 | **0.8900 ± 0.0037** |
 
 **Selection (recorded 2026-09-02, before any test number was read):** F1 top-two differ by
 0.0001, inside both seed stds → tie → broken on ROC-AUC → **`rdkit_fg`**.
+
+⚠️ The graph-only row above shows its **post-re-run** figures (its seed 0 was re-trained after
+being overwritten by a smoke test). On these refreshed numbers the ROC-AUC tiebreak would pick
+`none`, not `rdkit_fg` — the single-split ranking is unstable. The recorded selection stands
+because it was made before the test set was read; see
+[projects/paper.md](projects/paper.md) §6.1, and the CV confirmation below.
 
 **Confirmed by 5-fold CV (2026-09-02).** The single-split ranking proved unstable — re-training
 one seed of the graph-only arm moved it to first on AUC ([projects/paper.md](projects/paper.md)
