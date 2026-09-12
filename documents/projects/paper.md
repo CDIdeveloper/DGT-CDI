@@ -27,8 +27,11 @@ whether a graph transformer with an explicit descriptor-fusion channel performs
 competitively**, and — separately — whether the descriptor channel contributes at all once
 model selection is made without reference to the test set.
 
-The second question turns out to matter: a previously reported descriptor benefit on a
-related dataset does not survive re-derivation on validation data (§8).
+The second question turns out to matter: a previously reported descriptor benefit of +0.0183
+ROC-AUC on a related dataset falls to +0.0035, and cannot be established, on the corrected
+one (§7, §8). Separating the two causes shows the drop is mostly the curation change rather
+than the earlier study's test-based selection — but selection alone still accounted for
++0.0038, an inflation the same size as the entire descriptor effect measurable here (§8.1).
 
 **Scope.** This document covers the DGT results produced in this repository. Cross-model
 comparison against the gradient-boosting and MPNN baselines is assembled centrally, where
@@ -455,7 +458,9 @@ but weakly positive (t = 2.22, df = 4; p ≈ 0.09) — suggestive, short of conv
 significance at five folds, and not corrected for having compared four arms. The honest
 statement is that **any descriptor benefit on this endpoint is at most ~0.004 ROC-AUC and
 cannot be established at this sample size** — against the +0.0183 reported by the earlier
-test-selected study (§8).
+study on `biodeg_gwu` (§8). Note that most of that difference is the curation change, not the
+earlier study's test-based selection: §8.1 separates the two and attributes +0.0038 to
+selection.
 
 ---
 
@@ -474,11 +479,60 @@ without two qualifications:
    both decided on test ROC-AUC read from `agg/test/best.json`. This is the selection
    procedure that [porting guide §2](../dgt_porting_guide.md) explicitly prohibits.
 
-Re-deriving the same comparison on validation data, on the corrected dataset, collapses the
-descriptor effect from +0.0183 to +0.0001 on ROC-AUC. **This is itself a result**: it
-quantifies how much of a reported ablation gain can be an artifact of selecting the winner on
-the evaluation set, and it is a useful cautionary datapoint for the descriptor-fusion
-literature.
+### 8.1 Isolating the selection effect from the dataset change
+
+Those two qualifications are confounded: the +0.0183 and the present work's +0.0035 differ in
+*both* the selection procedure and the dataset. To separate them, the earlier study's runs
+were re-ranked on **validation only** — same dataset, same 4 seeds, same checkpoints, no
+retraining. The validation verdict was recorded before test columns were displayed
+(`rank_configs_by_val.py --hide-test`, then a second pass without it).
+
+| `biodeg_gwu`, 4 seeds, ROC-AUC | Val (selection basis) | Δ val vs baseline | Test | Δ test vs baseline |
+|---|---|---|---|---|
+| all descriptors (247) | **0.8838 ± 0.0008** ← val picks this | **+0.0063** | 0.8966 ± 0.0027 | **+0.0145** |
+| `rdkit_fg` / non-GWU (207) | 0.8826 ± 0.0017 | +0.0051 | **0.9004 ± 0.0004** ← test picks this | **+0.0183** |
+| SHAP-selected (94) | 0.8790 ± 0.0014 | +0.0015 | 0.8864 ± 0.0055 | +0.0043 |
+| baseline, graph only | 0.8775 ± 0.0024 | — | 0.8821 ± 0.0034 | — |
+| QM only (40) | 0.8728 ± 0.0026 | −0.0047 | 0.8728 ± 0.0070 | −0.0093 |
+
+**Validation and test disagree, but only about which descriptor arm wins.** Validation selects
+*all descriptors*; test selects *non-GWU*. The two are 0.0012 apart on validation, inside the
+seed standard deviation — a tie that test broke differently. Ranks 3–5 are identical on both
+bases.
+
+**The selection effect is +0.0038 — about a fifth of the reported gain.** Leak-free selection
+on this dataset would have chosen the 247-descriptor arm and reported its test delta of
+**+0.0145**, against the +0.0183 obtained by choosing the arm that scored best on test. That
+is the isolated cost of selecting on the evaluation set, holding dataset, runs and metric
+fixed.
+
+**The remaining ~+0.0145 is not a selection artefact — it does not survive the dataset
+change.** On `biodeg_gwu` a descriptor benefit is real and survives leak-free selection:
++0.0063 on validation, about 2.6× the baseline arm's seed standard deviation. On
+`biodeg_gwu_no_ind`, paired across CV folds, the same comparison gives **+0.0035** and does
+not reach significance (§7). Of the 0.0148 total collapse from +0.0183 to +0.0035, then,
+**0.0038 (26 %) is selection-on-test and 0.0110 (74 %) is the curation change** — removing the
+inherently-biodegradable rows, which shrinks the dataset from 5742/300 to 5264/278. Roughly
+one part selection to three parts curation. The residual also absorbs a protocol change
+(single 90/10 split → 5-fold CV), so 0.0110 is an upper bound on the curation effect alone.
+
+**What this does and does not support.** It does *not* support the claim that the earlier
+gain was mostly an artefact of selecting on test; that claim was made before the effects were
+separated and is withdrawn. What it does support is narrower and still worth reporting:
+selecting an ablation winner on the evaluation set inflated a reported gain by **+0.0038 on a
+real study**, roughly the size of the entire descriptor effect this work is able to measure on
+the corrected dataset (+0.0035). An inflation that small is invisible without the
+counterfactual, and it is the same size as the effect being argued about — which is the
+cautionary point, and the reason this is framed as a **methods caution rather than a headline
+contribution** (§12 item 6).
+
+**The architecture sweep, by contrast, was harmless.** The earlier study's four architecture
+variants rank identically on validation and on test (Δ rank = 0 for all four; the baseline
+leads on both at val 0.8775 / test 0.8821). That sweep was procedurally test-selected but the
+procedure cost nothing — a useful reminder that selecting on test does not always change the
+answer, and that the risk is a function of how close the candidates are.
+
+Evidence: `gwu_val_rank.json` in the paper-artifacts prefix (§10.3).
 
 ---
 
@@ -779,6 +833,46 @@ computing either. Note also that the seed mean must be taken in float64, as the 
 
 ---
 
+## 10.3 Paper artifacts
+
+Result files and figures the manuscript cites, and where they live. Nothing here is generated
+at write-up time; each is the file the corresponding section was written from.
+
+**Deposited** at
+`s3://cdi-lab-workspaces/ts_project_1/data/biodegradation/GWU/paper_artifacts/dgt/`
+(2026-09-10):
+
+| File | What it shows | Cited by |
+|---|---|---|
+| `dgt_cv_results.json` / `.md` | Per-fold CV scores for all four arms, the §2 selection rule applied, and the verdict | §5.2b, §6.2 |
+| `gwu_val_rank.json` / `.md` | The §8.1 counterfactual — the earlier descriptor study ranked on validation and on test, per seed | §8.1 |
+| `gwu_arch_val_rank.json` / `.md` | The earlier architecture sweep, ranking identically on both bases | §8.1 |
+| `nongwu_agg_test_best.json` | The 4-seed test aggregate behind the headline table | §5.3 |
+
+**Already deposited inside the deployment bundles**, at
+`s3://cdi-lab-workspaces/ts_project_1/models/biodegradation/GWU/biodeg-no-ind-dgt-{nongwu,graphonly}-2026-09-03/deploy_eval/`
+— cite them there rather than duplicating:
+
+| File | What it shows |
+|---|---|
+| `roc.png` | ROC curve for the deployed checkpoint on the 278 held-out molecules |
+| `pr.png` | Precision–recall curve — the curve to read when choosing an operating point (§10.1) |
+| `confusion.png` | Confusion matrix at the shipped 0.5 threshold |
+| `score_hist.png` | Predicted-probability histogram by true class |
+| `*_v2_scores.csv` | Per-molecule scores from the deployed checkpoint |
+| `summary.json` | The metric row quoted in §10.1 |
+
+**Per-molecule predictions** (three arms) are in the sibling `predictions/` prefix and are
+documented in §10.2.
+
+**There is no ablation figure.** §5.2b, §6.1 and §7 are tables and paired t-tests; the
+per-seed `plots/` directories on disk hold `summary.json` only, because `analyze_run.py` was
+run with `--no-plots`. The three exported prediction files (§10.2) would be the natural
+substrate if a figure is wanted — paired per-fold ROC-AUC across arms, or the F1-versus-
+threshold plateau of §7 — but none has been produced.
+
+---
+
 ## 11. Remaining work before submission
 
 - [x] Read the test set **once** for the selected configuration (§5.3, 2026-09-02).
@@ -790,6 +884,11 @@ computing either. Note also that the seed mean must be taken in float64, as the 
 - [x] Export per-molecule OOF-train + test probabilities for the cross-model comparison —
       three arms, `rdkit_fg` / `qm_rdkit` / `none` (§10.2, 2026-09-10). No training; harvested
       from the §5.2b and §5 ablation runs.
+- [x] **Separate the selection effect from the curation change** in the §8 comparison, by
+      re-ranking the earlier `biodeg_gwu` runs on validation only (§8.1, 2026-09-11). No
+      retraining. Result: 26 % selection, 74 % curation — the "selection artefact" reading is
+      withdrawn.
+- [x] Deposit the cited result files to the paper-artifacts prefix (§10.3, 2026-09-11).
 - [ ] **Decide the framing** — whether the "test-selected ablation gains do not replicate"
       finding (§8) is a headline contribution or a methods note. Options drafted side by side
       in [paper_framing_options.md](paper_framing_options.md). This is the only open item that
