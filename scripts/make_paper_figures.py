@@ -5,7 +5,7 @@ metric is recomputed in a way that could disagree with the paper — each figure
 plots the same quantity its section reports.
 
   fig1_paired_fold_auc    the §7 paired descriptor test, made visual.
-                          (a) per-fold OOF ROC-AUC for the three exported arms,
+                          (a) per-fold OOF AUROC for the three exported arms,
                           one line per fold, so the pairing is on the page: fold
                           identity moves the metric far more than arm identity
                           does. (b) the two paired contrasts as per-fold
@@ -54,27 +54,32 @@ from sklearn.metrics import (
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.ticker import MultipleLocator  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PRED_DIR = REPO_ROOT / 'results' / 'predictions'
 FINAL_MODELS = REPO_ROOT / 'results' / 'final_models'
 OUT_DIR = REPO_ROOT / 'results' / 'figures'
 
-# Arms in order of descriptor content, which is the axis order in fig 1a.
+# An "arm" is a feature set: identical backbone and hyperparameters throughout,
+# only the descriptor channel changes. Ordered by descriptor content, which is
+# the x order in fig 1a.
 ARMS = [
     ('none', 'graph only'),
-    ('rdkit_fg', 'RDKit/fg\n(207)'),
+    ('rdkit_fg', 'RDKit\n(207)'),
     ('qm_rdkit', 'all\n(247)'),
 ]
 # The two contrasts §7 reports, as (label, minuend, subtrahend).
 CONTRASTS = [
-    ('RDKit/fg − graph only', 'rdkit_fg', 'none'),
-    ('all − RDKit/fg', 'qm_rdkit', 'rdkit_fg'),
+    ('RDKit − graph only', 'rdkit_fg', 'none'),
+    ('all − RDKit', 'qm_rdkit', 'rdkit_fg'),
 ]
+# x positions for fig 1b — spaced so each strip's annotation has clear room.
+CONTRAST_X = np.array([0.0, 1.7])
 # Deployment bundles for fig 2, with the score-CSV basename each one wrote.
 BUNDLES = [
     ('biodeg-no-ind-dgt-nongwu-2026-09-03', 'nongwu_v2_scores.csv',
-     'Descriptor model (RDKit/fg, 207)'),
+     'Descriptor model (RDKit, 207)'),
     ('biodeg-no-ind-dgt-graphonly-2026-09-03', 'graphonly_v2_scores.csv',
      'Graph-only model'),
 ]
@@ -146,14 +151,14 @@ def _fold_aucs():
             roc_auc_score(g['true'].to_numpy(), g['prob'].to_numpy())
             for _, g in tr.groupby('fold')
         ]
-        print(f'  {arm:<9} per-fold ROC-AUC ' +
+        print(f'  {arm:<9} per-fold AUROC ' +
               ', '.join(f'{v:.4f}' for v in out[arm]) +
               f'   mean {np.mean(out[arm]):.4f} ± {np.std(out[arm]):.4f}')
     return out
 
 
 def figure_1():
-    print('Figure 1 — paired per-fold OOF ROC-AUC')
+    print('Figure 1 — paired per-fold OOF AUROC')
     aucs = _fold_aucs()
     n_folds = len(next(iter(aucs.values())))
     xs = np.arange(len(ARMS))
@@ -179,32 +184,36 @@ def figure_1():
     ax_a.set_xticks(xs)
     ax_a.set_xticklabels([lbl for _, lbl in ARMS])
     ax_a.set_xlim(-0.35, len(ARMS) - 0.65)
-    ax_a.set_ylabel('Out-of-fold ROC-AUC')
-    ax_a.set_title('(a) Every fold, every arm', loc='left', color=INK)
+    ax_a.yaxis.set_major_locator(MultipleLocator(0.005))
+    ax_a.set_xlabel('Descriptor set')
+    ax_a.set_ylabel('Out-of-fold AUROC')
+    ax_a.set_title('Every fold, every descriptor set', loc='left', color=INK,
+                   pad=8)
 
     # (b) paired differences against zero — what §7's t-tests test.
     ax_b.set_axisbelow(True)
     ax_b.yaxis.grid(True)
     ax_b.axhline(0, color=INK_2, lw=0.9, zorder=2)
     for i, (label, hi, lo) in enumerate(CONTRASTS):
+        x = CONTRAST_X[i]
         diffs = np.array(aucs[hi]) - np.array(aucs[lo])
         colour = (BLUE, ORANGE)[i]
-        ax_b.plot(np.full(len(diffs), i), diffs, marker='o', ms=5, lw=0,
+        ax_b.plot(np.full(len(diffs), x), diffs, marker='o', ms=5, lw=0,
                   color=colour, markeredgecolor='white', markeredgewidth=1.0,
                   alpha=0.95, zorder=3)
-        ax_b.plot([i - 0.16, i + 0.16], [diffs.mean()] * 2, color=colour,
+        ax_b.plot([x - 0.16, x + 0.16], [diffs.mean()] * 2, color=colour,
                   lw=2.0, zorder=4)
         favour = int((diffs > 0).sum())
         ax_b.annotate(f'mean {diffs.mean():+.4f}\n{favour}/{len(diffs)} folds > 0',
-                      (i + 0.2, diffs.mean()), va='center', ha='left',
+                      (x + 0.24, diffs.mean()), va='center', ha='left',
                       color=colour, fontsize=7.5)
-        print(f'  {label:<22} mean {diffs.mean():+.4f}  '
+        print(f'  {label:<20} mean {diffs.mean():+.4f}  '
               f'{favour}/{len(diffs)} folds > 0')
-    ax_b.set_xticks(range(len(CONTRASTS)))
+    ax_b.set_xticks(CONTRAST_X)
     ax_b.set_xticklabels([lbl for lbl, _, _ in CONTRASTS])
-    ax_b.set_xlim(-0.45, len(CONTRASTS) + 0.45)
-    ax_b.set_ylabel('Δ ROC-AUC, paired by fold')
-    ax_b.set_title('(b) Paired differences', loc='left', color=INK)
+    ax_b.set_xlim(CONTRAST_X[0] - 0.5, CONTRAST_X[-1] + 1.45)
+    ax_b.set_ylabel('Δ AUROC, paired by fold')
+    ax_b.set_title('Paired differences', loc='left', color=INK, pad=8)
 
     fig.tight_layout()
     _save(fig, 'fig1_paired_fold_auc')
@@ -238,7 +247,10 @@ def figure_2():
         inside = thr[f1 >= best - PLATEAU_TOL]
         lo, hi = float(inside.min()), float(inside.max())
         argmax_t = float(thr[int(np.argmax(f1))])
-        f1_at_half = float(f1[np.searchsorted(thr, 0.5, side='right') - 1])
+        # F1 "at 0.5" is the step at the FIRST threshold >= 0.5. The rule is
+        # `score >= t`, so any grid point below 0.5 admits molecules a 0.5 cut
+        # excludes, and reading the step below would overstate the metric.
+        f1_at_half = float(f1[np.searchsorted(thr, 0.5, side='left')])
 
         ax.set_axisbelow(True)
         ax.yaxis.grid(True)
@@ -255,17 +267,19 @@ def figure_2():
                         fontweight='bold' if label == 'F1' else 'normal',
                         annotation_clip=False)
         ax.axvline(0.5, color=INK_2, lw=0.9, ls=(0, (3, 2)), zorder=2)
-        ax.annotate('0.5', (0.5, 1.005), ha='center', va='bottom',
+        ax.annotate('0.5', (0.5, 1.008), ha='center', va='bottom',
                     color=INK_2, fontsize=7.5, annotation_clip=False)
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1.0)
         ax.set_xlabel('Decision threshold')
-        ax.set_title(title, loc='left', color=INK)
+        # pad clears the '0.5' tick label sitting just above the axes.
+        ax.set_title(title, loc='left', color=INK, pad=16)
+        # Kept to short lines so the block stays left of the 0.5 rule.
         ax.annotate(
-            f'F1 within {PLATEAU_TOL:g} of max\nover {lo:.3f}–{hi:.3f} '
+            f'F1 within {PLATEAU_TOL:g}\nof max over\n{lo:.3f}–{hi:.3f}\n'
             f'(width {hi - lo:.3f})',
-            (0.03, 0.06), xycoords='axes fraction', ha='left', va='bottom',
-            color=BLUE, fontsize=7)
+            (0.03, 0.05), xycoords='axes fraction', ha='left', va='bottom',
+            color=BLUE, fontsize=7, linespacing=1.35)
         print(f'  {title}')
         print(f'    max F1 {best:.4f} at threshold {argmax_t:.4f};  '
               f'F1 @ 0.5 = {f1_at_half:.4f}  (cost {best - f1_at_half:.4f})')
