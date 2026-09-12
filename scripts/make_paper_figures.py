@@ -211,7 +211,9 @@ def figure_1():
               f'{favour}/{len(diffs)} folds > 0')
     ax_b.set_xticks(CONTRAST_X)
     ax_b.set_xticklabels([lbl for lbl, _, _ in CONTRASTS])
-    ax_b.set_xlim(CONTRAST_X[0] - 0.5, CONTRAST_X[-1] + 1.45)
+    # Left pad exceeds the half-width of the longest tick label so it cannot
+    # overhang the axes; right pad leaves room for the second strip's annotation.
+    ax_b.set_xlim(CONTRAST_X[0] - 1.0, CONTRAST_X[-1] + 1.45)
     ax_b.set_ylabel('Δ AUROC, paired by fold')
     ax_b.set_title('Paired differences', loc='left', color=INK, pad=8)
 
