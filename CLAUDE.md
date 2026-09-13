@@ -118,8 +118,18 @@ Hard-won failures. Each one has bitten this project; each is silent unless you k
    `python scripts/rank_configs_by_val.py <run_dirs...> --metric f1 --hide-test`, record the
    verdict, *then* look at test. `agg/test/best.json` is a record, not a decision input. See
    [documents/dgt_porting_guide.md](documents/dgt_porting_guide.md) §2 and
-   [documents/projects/paper.md](documents/projects/paper.md) §8 for what happens when this
-   rule is broken (a reported +0.0183 ablation gain collapsed to +0.0001).
+   [documents/projects/paper.md](documents/projects/paper.md) §8.1, which measures the cost on
+   this project: selecting the ablation winner on test **inflated the reported gain by
+   +0.0038** — the same size as the entire descriptor effect that survives proper
+   re-derivation, +0.0035. An inflation that large relative to the effect is invisible unless
+   you run the counterfactual.
+
+   **Corollary — quote the number that measures the thing you are claiming.** §8 previously
+   said the gain "collapsed to +0.0001". That 0.0001 was the F1 gap between *two descriptor
+   arms* (247 vs 207), not descriptor-vs-baseline, and not ROC-AUC. It was a real number from
+   an adjacent table that answered a different question, and it overstated the collapse
+   (99.5 % rather than the true 81 %). Before quoting a delta, restate which two things it
+   subtracts, on which metric, on which split.
 
 4. **`Failed when trying to aggregate multiple runs: ... val/stats.json` after a retrain is
    EXPECTED.** `dgt_retrain` writes only the train logger — it has no validation or test phase

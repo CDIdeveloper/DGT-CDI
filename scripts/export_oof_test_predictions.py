@@ -53,7 +53,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import StratifiedKFold
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +101,12 @@ ARMS = {
         'config': 'BiodegNoInd-DGT-Pipeline-WithDesc',
         'about': '247 descriptors (40 QM + 207 RDKit/fg) — matches the MPNN baseline',
         'cv_auc': (0.8925, 0.0064),
+        'test': None,
+    },
+    'qm': {
+        'config': 'BiodegNoInd-DGT-Pipeline-WithDesc-gwu',
+        'about': '40 quantum-mechanical descriptors only',
+        'cv_auc': (0.8887, 0.0052),
         'test': None,
     },
     'none': {
@@ -152,10 +165,14 @@ def _mean_pstd(values):
 
 
 def _binary_metrics(y_true, prob):
+    pred = (prob >= 0.5).astype(int)
     return {
         'roc_auc': roc_auc_score(y_true, prob),
         'auprc': average_precision_score(y_true, prob),
-        'f1@0.5': f1_score(y_true, (prob >= 0.5).astype(int), zero_division=0),
+        'f1@0.5': f1_score(y_true, pred, zero_division=0),
+        'accuracy': accuracy_score(y_true, pred),
+        'precision': precision_score(y_true, pred, zero_division=0),
+        'recall': recall_score(y_true, pred, zero_division=0),
     }
 
 
@@ -243,10 +260,16 @@ def main():
     _banner('0. Preflight — every source dump this export reads')
     fold_paths, seed_paths = _source_paths(config)
     missing = []
+    # mtimes are printed so a re-trained artifact is visible: a dump stamped
+    # well after its siblings did not come from the original sweep, and an arm
+    # containing one does not share provenance with the others (this is what
+    # happened to the graph-only arm's seed 0 — see paper.md §10).
     for label, path in fold_paths + seed_paths:
         ok = path.is_file()
         missing += [] if ok else [path]
-        print(f'  {"OK  " if ok else "MISS"} {label:<12} {path}')
+        stamp = (pd.Timestamp(path.stat().st_mtime, unit='s').strftime('%Y-%m-%d %H:%M')
+                 if ok else '—' * 8)
+        print(f'  {"OK  " if ok else "MISS"} {label:<12} {stamp}  {path}')
     if missing:
         raise SystemExit(
             f"\n{len(missing)} source dump(s) missing for arm '{args.arm}'. "
@@ -360,20 +383,32 @@ def main():
     print('\n  Test, 278 molecules:')
     print('    (a) per seed, then averaged — the single-model form, use this '
           'for cross-model comparison:')
+    per_seed = [_binary_metrics(y_te, te[c].to_numpy()) for c in seed_cols]
     for key in ('f1@0.5', 'roc_auc', 'auprc'):
-        vals = [_binary_metrics(y_te, te[c].to_numpy())[key] for c in seed_cols]
-        mean, std = _mean_pstd(vals)
+        mean, std = _mean_pstd([s[key] for s in per_seed])
         label = f'{key} mean +- {std:.4f}'
         if arm['test'] is not None:
             _report(label, mean, arm['test'][key])
         else:
             print(f'    {label:<26} {mean:.4f}    (no published value — §5.3 '
                   f'reads test for the selected arm only)')
-    m = _binary_metrics(y_te, te['prob'].to_numpy())
+    ens = _binary_metrics(y_te, te['prob'].to_numpy())
     print('    (b) from the seed-mean `prob` — a 4-model ensemble, expected '
           'slightly higher:')
-    print(f'      f1@0.5={m["f1@0.5"]:.4f}  roc_auc={m["roc_auc"]:.4f}  '
-          f'auprc={m["auprc"]:.4f}')
+    print(f'      f1@0.5={ens["f1@0.5"]:.4f}  roc_auc={ens["roc_auc"]:.4f}  '
+          f'auprc={ens["auprc"]:.4f}')
+
+    # Manuscript reporting convention: rates as percentages to 2 dp, ranking
+    # metrics as decimals to 4 dp. Always from (a), never from the seed mean.
+    print('\n  Manuscript table row — per seed, then averaged '
+          '(mean ± population std over 4 seeds):')
+    for key, label in (('accuracy', 'Accuracy'), ('precision', 'Precision'),
+                       ('recall', 'Recall'), ('f1@0.5', 'F1')):
+        mean, std = _mean_pstd([s[key] for s in per_seed])
+        print(f'    {label:<10} {100 * mean:6.2f} ± {100 * std:.2f} %')
+    for key, label in (('roc_auc', 'AUROC'), ('auprc', 'AUPRC')):
+        mean, std = _mean_pstd([s[key] for s in per_seed])
+        print(f'    {label:<10} {mean:.4f} ± {std:.4f}')
 
     _banner('5. Numeric precision')
     probs = out[['prob'] + seed_cols].to_numpy()
